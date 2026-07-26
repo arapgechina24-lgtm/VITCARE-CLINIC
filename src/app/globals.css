@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink-rgb: 15 23 42;      /* #0F172A */
+  --paper: #F8FAFC;
+}
+.dark {
+  --ink-rgb: 226 232 240;   /* #E2E8F0 */
+  --paper: #0B1220;
+}
+
+html, body { height: 100%; }
+body {
+  @apply bg-paper text-ink font-body antialiased;
+}

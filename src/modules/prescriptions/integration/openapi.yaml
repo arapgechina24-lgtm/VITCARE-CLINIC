@@ -1,0 +1,119 @@
+openapi: 3.1.0
+info:
+  title: VITCARE Prescription Integration
+  version: 1.0.0
+  description: >
+    Contract between VITCARE-CLINIC and VITCARE-POS. CLINIC pushes prescriptions
+    to POS (POST /prescriptions). POS pushes status changes back to CLINIC
+    (POST /integration/pos/prescription-status). Both requests are HMAC-signed
+    over `${X-Timestamp}.${rawBody}` with the shared secret.
+
+paths:
+  /prescriptions:
+    post:
+      summary: CLINIC -> POS. Queue a prescription for dispensing.
+      parameters:
+        - { in: header, name: X-Contract-Version, required: true, schema: { type: string } }
+        - { in: header, name: X-Timestamp, required: true, schema: { type: string, format: date-time } }
+        - { in: header, name: X-Signature, required: true, schema: { type: string } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePrescription' }
+      responses:
+        '202': { description: Accepted and queued at the pharmacy }
+        '401': { description: Missing or invalid signature }
+        '409': { description: Duplicate Idempotency-Key (already queued) }
+        '422': { description: Payload failed validation }
+
+  /integration/pos/prescription-status:
+    post:
+      summary: POS -> CLINIC. Report a prescription status change.
+      parameters:
+        - { in: header, name: X-Timestamp, required: true, schema: { type: string, format: date-time } }
+        - { in: header, name: X-Signature, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PrescriptionStatusEvent' }
+      responses:
+        '200': { description: Acknowledged (or deduped) }
+        '401': { description: Bad signature or stale timestamp }
+        '404': { description: Unknown prescription }
+        '409': { description: Illegal status transition }
+        '422': { description: Payload failed validation }
+
+components:
+  schemas:
+    CreatePrescription:
+      type: object
+      required: [contractVersion, prescriptionId, fulfillmentSiteId, patient, prescriber, encounterId, items, issuedAt]
+      properties:
+        contractVersion: { type: string, const: "1.0.0" }
+        prescriptionId: { type: string, format: uuid }
+        fulfillmentSiteId: { type: string, format: uuid }
+        encounterId: { type: string, format: uuid }
+        issuedAt: { type: string, format: date-time }
+        note: { type: string, maxLength: 1000 }
+        patient:
+          type: object
+          required: [mrn, fullName, payer]
+          properties:
+            mrn: { type: string }
+            fullName: { type: string }
+            phone: { type: string }
+            payer: { type: string, enum: [CASH, SHA, INSURER] }
+            insurerCode: { type: string }
+        prescriber:
+          type: object
+          required: [userId, name]
+          properties:
+            userId: { type: string, format: uuid }
+            name: { type: string }
+            licenseNo: { type: string }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PrescriptionItem' }
+
+    PrescriptionItem:
+      type: object
+      required: [itemId, drugName, dose, frequency, quantity]
+      properties:
+        itemId: { type: string, format: uuid }
+        drugCode: { type: string }
+        drugName: { type: string }
+        strength: { type: string }
+        dose: { type: string }
+        frequency: { type: string }
+        durationDays: { type: integer, minimum: 1 }
+        quantity: { type: integer, minimum: 1 }
+        instructions: { type: string, maxLength: 500 }
+        substitutionAllowed: { type: boolean, default: false }
+
+    PrescriptionStatusEvent:
+      type: object
+      required: [contractVersion, eventId, prescriptionId, status, occurredAt]
+      properties:
+        contractVersion: { type: string, const: "1.0.0" }
+        eventId: { type: string, format: uuid }
+        prescriptionId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PRICED, DISPENSED, COLLECTED, OUT_OF_STOCK, PARTIAL, SUBSTITUTED, CANCELLED]
+        occurredAt: { type: string, format: date-time }
+        totalAmountCents: { type: integer, minimum: 0 }
+        reason: { type: string, maxLength: 500 }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [itemId, dispensedQuantity, lineStatus]
+            properties:
+              itemId: { type: string, format: uuid }
+              dispensedQuantity: { type: integer, minimum: 0 }
+              substitutedWith: { type: string }
+              lineStatus: { type: string, enum: [OK, SUBSTITUTED, OUT_OF_STOCK, PARTIAL] }
