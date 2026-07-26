@@ -24,9 +24,13 @@ language plpgsql security definer
 set search_path = public
 as $$
 begin
+  -- `site_id` is also this function's own RETURNS TABLE output column, which
+  -- PL/pgSQL treats as an implicit local variable for the whole function body
+  -- — `select site_id from user_sites(...)` would be ambiguous between that
+  -- and user_sites()'s own site_id column. The `us` alias disambiguates it.
   if not (
     has_role(auth.uid(), 'ADMIN') or has_role(auth.uid(), 'AUDITOR')
-    or p_site_id in (select site_id from user_sites(auth.uid()))
+    or p_site_id in (select us.site_id from user_sites(auth.uid()) us)
   ) then
     raise exception 'not authorized';
   end if;

@@ -50,27 +50,18 @@ create table if not exists users (
 );
 alter table users enable row level security;
 create policy users_read_self on users for select using (id = auth.uid());
-create policy users_admin_read_all on users for select using (
-  exists (select 1 from users u where u.id = auth.uid() and u.role = 'ADMIN')
-);
-
--- Which site(s) each staff member belongs to (many-to-many: a clinician can
--- rotate between sites; Phase 1 only ever populates one row per user, but
--- the model shouldn't need a migration to support a second clinic later).
-create table if not exists user_site_memberships (
-  user_id uuid not null references users(id) on delete cascade,
-  site_id uuid not null references sites(id) on delete cascade,
-  primary key (user_id, site_id)
-);
-alter table user_site_memberships enable row level security;
-create policy user_site_memberships_read_self on user_site_memberships
-  for select using (user_id = auth.uid());
 
 -- ── RLS helper functions ─────────────────────────────────────────────────
--- SECURITY DEFINER: these run with the privilege to read `users`/
--- `user_site_memberships` directly, bypassing RLS ON THOSE TWO TABLES ONLY,
--- so that a policy on (say) `patients` can call has_role()/user_sites()
--- without recursing into patients' own RLS. Never widen what these touch.
+-- Defined here (right after `users`, before any policy needs them) rather
+-- than further down: users_admin_read_all below MUST go through has_role()
+-- (SECURITY DEFINER, reads `users` as its owner) instead of a raw
+-- `exists (select 1 from users ...)` subquery — a policy ON `users` that
+-- queries `users` again is infinite recursion (Postgres error 42P17), not a
+-- "some other policy makes this row visible anyway" no-op. That exact
+-- mistake broke every login in local dev testing before this reordering.
+-- Table existence isn't checked at CREATE FUNCTION time (only at first
+-- execution), so user_sites() referencing user_site_memberships — created
+-- just below — is fine.
 create or replace function has_role(p_user uuid, p_role text)
 returns boolean
 language sql security definer stable
@@ -86,6 +77,20 @@ set search_path = public
 as $$
   select site_id from user_site_memberships where user_id = p_user;
 $$;
+
+create policy users_admin_read_all on users for select using (has_role(auth.uid(), 'ADMIN'));
+
+-- Which site(s) each staff member belongs to (many-to-many: a clinician can
+-- rotate between sites; Phase 1 only ever populates one row per user, but
+-- the model shouldn't need a migration to support a second clinic later).
+create table if not exists user_site_memberships (
+  user_id uuid not null references users(id) on delete cascade,
+  site_id uuid not null references sites(id) on delete cascade,
+  primary key (user_id, site_id)
+);
+alter table user_site_memberships enable row level security;
+create policy user_site_memberships_read_self on user_site_memberships
+  for select using (user_id = auth.uid());
 
 -- ── Patients ─────────────────────────────────────────────────────────────
 create table if not exists patients (
