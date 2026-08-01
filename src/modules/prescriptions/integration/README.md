@@ -13,6 +13,33 @@ code.
 | `webhook-handler.ts` | Receives POS status webhooks; verifies signature, dedupes, enforces transitions. | CLINIC (here) |
 | `supabase-deps.ts` | Wires the two DB-agnostic interfaces above (`WebhookDeps`, `OutboxStore`) against this project's actual Supabase tables. | CLINIC (here) |
 | `openapi.yaml` | The wire contract, for both teams and for contract tests. | Both |
+| `webhook-handler.test.ts` | 19 tests: signature forgery, body tampering, replay window, dedupe, state machine, payload validation. | CLINIC (here) |
+| `pos-client-outbox.test.ts` | 18 tests: request shape/idempotency key, retry-vs-permanent classification, backoff ceiling, drain accounting. | CLINIC (here) |
+
+## Tests
+
+```bash
+npm test          # 37 tests, ~1s, no network and no database
+```
+
+They run on every commit via the pre-commit hook (`scripts/install-hooks.sh`)
+alongside the RLS check, because this module is the one place where a silent
+regression costs a patient their medication rather than just breaking a page.
+
+The `WebhookDeps` / `OutboxStore` interfaces exist precisely so these run
+against injected fakes — no Supabase, no POS, no clock skew flakiness. Two
+properties are worth understanding before editing:
+
+- **Rejected requests must not touch the database.** Several tests assert not
+  just a 401 but that `hasProcessedEvent` was never called. A 401 that still
+  queried the DB would mean unauthenticated input reaching the data layer.
+- **A transient POS outage must never discard a prescription.** The
+  retry-vs-permanent table is the safety net; making `permanent` unconditional
+  fails 7 tests, which is the point.
+
+Both suites were mutation-tested — each guard (signature check, length guard,
+replay window, permanence classification, idempotency key, backoff ceiling,
+boundary validation) was deliberately broken to confirm a test catches it.
 
 Mounted at:
 - `POST /api/integration/pos/prescription-status` — `src/app/api/integration/pos/prescription-status/route.ts`
