@@ -15,7 +15,18 @@ export default function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+        // Without this, the emailed link redirects to the project's Site URL,
+        // which still points at port 3000 — the pharmacy till, not this app.
+        // Supabase honours this override (verified against a real inbox), so
+        // the link works without needing dashboard access. See
+        // src/app/auth/confirm/page.tsx for the other half.
+        emailRedirectTo: `${window.location.origin}/auth/confirm`,
+      },
+    });
     setBusy(false);
     if (error) return setError(error.message);
     setStage('code');
@@ -99,7 +110,7 @@ export default function LoginPage() {
               disabled={busy}
               className="w-full rounded-lg bg-clinic text-white py-2 font-medium disabled:opacity-50"
             >
-              {busy ? 'Sending…' : 'Send code'}
+              {busy ? 'Sending…' : 'Email me a sign-in link'}
             </button>
             <button type="button" onClick={() => setUsePassword(true)} className="text-xs text-ink/50 underline">
               Sign in with a password instead
@@ -107,11 +118,16 @@ export default function LoginPage() {
           </form>
         ) : (
           <form onSubmit={verifyCode} className="space-y-3">
-            <p className="text-sm text-ink/60">Enter the code sent to {email}</p>
+            <p className="text-sm text-ink/60">
+              Check {email} and click the sign-in link — open it on this device.
+            </p>
+            {/* The code box only becomes usable once the project's Magic Link
+                email template includes {{ .Token }}; the Supabase default is
+                link-only. Kept visible (rather than hidden behind a flag) so
+                that adding the token to the template needs no code change. */}
+            <p className="text-xs text-ink/45">Or, if your email shows a 6-digit code, enter it here:</p>
             <input
               type="text"
-              required
-              autoFocus
               inputMode="numeric"
               placeholder="123456"
               value={code}
@@ -120,10 +136,10 @@ export default function LoginPage() {
             />
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || code.length === 0}
               className="w-full rounded-lg bg-clinic text-white py-2 font-medium disabled:opacity-50"
             >
-              {busy ? 'Verifying…' : 'Sign in'}
+              {busy ? 'Verifying…' : 'Sign in with code'}
             </button>
           </form>
         )}
