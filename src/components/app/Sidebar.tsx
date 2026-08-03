@@ -30,7 +30,7 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
     heading: 'Clinical',
     items: [
       { href: '/dashboard', label: 'Overview', icon: LayoutDashboard, built: true },
-      { href: '/dashboard/patients', label: 'Patients', icon: Users, built: false },
+      { href: '/dashboard/patients', label: 'Patients', icon: Users, built: true },
       {
         href: '/dashboard/register',
         label: 'Register patient',
