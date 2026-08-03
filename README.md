@@ -23,12 +23,16 @@ The agreed Phase 1 is **one loop**: Register → Triage → Consult → Prescrib
 | Triage | CLINIC | ✅ |
 | Consult | CLINIC | ✅ |
 | Prescribe | CLINIC | ✅ — writes prescription + items + outbox row in one transaction |
-| Outbox → POS | CLINIC | ⚠️ code written and unit-tested; **never run** (no service key, not scheduled) |
-| Dispense | **POS** | ❌ not started |
-| Status back | **POS** | ❌ not started |
+| Outbox → POS | CLINIC | ⚠️ code written and tested; **not yet run live** (no service key, not scheduled) |
+| Dispense | **POS** | ✅ built — `/dashboard/prescriptions` queue, `POST /api/prescriptions` |
+| Status back | **POS** | ✅ built — status route + outbox + drain, delivered and verified |
 
-Everything still outstanding is either a five-minute setting or lives in the
-**vitcare-pos** repo. No further clinical UI is needed to finish Phase 1.
+The whole loop has been exercised end to end over real HTTP (see
+`vitcare-pos-dev`, commit "implement the POS half…"): a signed prescription
+accepted and persisted, redelivery idempotent, then PRICED → DISPENSED →
+COLLECTED delivered back and applied by the clinic's real handler.
+
+What remains is configuration, not construction — Step 0 below.
 
 ## Step 0 — unblock (do these first)
 
@@ -45,23 +49,15 @@ Everything still outstanding is either a five-minute setting or lives in the
    openssl rand -hex 32   # OUTBOX_DRAIN_SECRET (clinic only)
    ```
 
-## Step 1 — build the POS half (the real work)
+## Step 1 — the POS half ✅ done
 
-In **vitcare-pos**, three things, per
-`src/modules/prescriptions/integration/README.md`:
+Built in **vitcare-pos-dev** (`src/lib/integration/`, `src/app/api/prescriptions/`,
+`/dashboard/prescriptions`). Committed on the `dev` branch, **not deployed to
+the live till** — that is a separate, explicit step.
 
-1. Copy `prescription-contract.ts` across **verbatim**. It is the one shared
-   file; both sides must agree on the status vocabulary and `CONTRACT_VERSION`.
-2. `POST /api/prescriptions` — verify the HMAC over the raw body, reject stale
-   timestamps, **dedupe on `Idempotency-Key`** (the clinic retries on any
-   non-2xx, so a retry must not create a second order), return `202`.
-3. A pharmacy queue screen, and on dispense emit signed `PrescriptionStatusEvent`
-   webhooks to `POST /api/integration/pos/prescription-status` here —
-   `PRICED` → `DISPENSED` → `COLLECTED`, each with a unique `eventId`.
-
-The receiving side of all of this already exists and is tested; POS is
-writing to a contract that is defined, documented in `openapi.yaml`, and
-covered by 37 tests.
+Read `src/lib/integration/README.md` over there before changing it; it records
+why a duplicate answers 202 rather than 409, why unconfigured answers 503, and
+why outbox eligibility is decided by the database clock.
 
 ## Step 2 — connect them
 

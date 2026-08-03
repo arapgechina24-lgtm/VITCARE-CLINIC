@@ -113,3 +113,7 @@ create trigger trg_audit_prescriptions after insert or update or delete on presc
   for each row execute function audit_row_change();
 create trigger trg_audit_prescription_items after insert or update or delete on prescription_items
   for each row execute function audit_row_change();
+
+-- Added in 0006 (kept here too so a fresh deploy gets it inline): a
+-- permanently-failed delivery needs a terminal state distinct from
+-- `delivered`, or the drain re-sends it forever. See 0006_outbox_failed_flag.sql.

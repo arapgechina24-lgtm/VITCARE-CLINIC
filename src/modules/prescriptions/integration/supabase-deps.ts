@@ -64,7 +64,14 @@ export function makeOutboxStore(supabase: SupabaseClient): OutboxStore {
         .from('integration_outbox')
         .select('id, prescription_id, payload, attempts')
         .eq('delivered', false)
-        .lte('next_attempt_at', new Date().toISOString())
+        .eq('failed', false)
+        // 'now' is evaluated by POSTGRES. next_attempt_at is written with the
+        // database's clock, so comparing it to this process's clock makes
+        // eligibility depend on two machines agreeing — measured skew against
+        // this Supabase project was ~0.4s, enough to hide a just-queued row
+        // from an immediate drain, and far worse on a host with a drifting
+        // clock. One clock decides.
+        .lte('next_attempt_at', 'now')
         .order('next_attempt_at', { ascending: true })
         .limit(limit);
       if (error) throw error;
@@ -89,9 +96,13 @@ export function makeOutboxStore(supabase: SupabaseClient): OutboxStore {
       if (error) throw error;
     },
     async markFailed(id, error) {
+      // `failed`, not `delivered` — this prescription never reached the
+      // pharmacy and must never be mistaken for one that did. Setting the flag
+      // is also what stops the retry loop: without it the row keeps matching
+      // the pending query and is re-sent on every single drain, forever.
       const { error: dbError } = await supabase
         .from('integration_outbox')
-        .update({ last_error: error })
+        .update({ failed: true, last_error: error })
         .eq('id', id);
       if (dbError) throw dbError;
     },
