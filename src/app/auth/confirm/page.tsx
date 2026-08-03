@@ -41,6 +41,37 @@ export default function ConfirmPage() {
         return;
       }
 
+      // Implicit flow (the normal path): Supabase redirects here with the
+      // session in the URL fragment. Read it directly rather than relying on
+      // the client's auto-detection. Crucially this needs NOTHING stored in
+      // this browser, which is what makes a link work when staff request it on
+      // the till and open their mail somewhere else.
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const hashError = hash.get('error_description');
+      if (hashError) {
+        setError(hashError);
+        return;
+      }
+      const accessToken = hash.get('access_token');
+      const refreshToken = hash.get('refresh_token');
+      if (accessToken && refreshToken) {
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        // Strip the tokens from the address bar before navigating on, so they
+        // don't sit in browser history.
+        window.history.replaceState({}, '', '/auth/confirm');
+        toDashboard();
+        return;
+      }
+
+      // Legacy PKCE links issued before the switch to implicit may still be in
+      // someone's inbox; redeem them if the verifier happens to be present.
       const code = url.searchParams.get('code');
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
