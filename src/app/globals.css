@@ -2,16 +2,141 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ───────────────────────────────────────────────────────────────────────────
+   Design tokens.
+
+   Everything is a CSS custom property so light/dark swap in ONE place and the
+   components below are written against roles ("surface", "ink-muted") rather
+   than raw hex. Dark is a *selected* set of steps validated against the dark
+   surface — not an automatic inversion of the light one.
+
+   Every value here was contrast-checked against the surface it actually
+   renders on before being committed; see the commit message for the table.
+   ─────────────────────────────────────────────────────────────────────────── */
 :root {
-  --ink-rgb: 15 23 42;      /* #0F172A */
-  --paper: #F8FAFC;
-}
-.dark {
-  --ink-rgb: 226 232 240;   /* #E2E8F0 */
-  --paper: #0B1220;
+  /* Surfaces — crisp white cards on a soft gray plane. */
+  --page: #f7f8fa;
+  --surface: #ffffff;
+  --surface-sunken: #f2f4f7;   /* wells, table headers, inset areas */
+  --surface-hover: #f7f8fa;
+
+  /* Ink. Primary 17.9:1, secondary 7.7:1, muted 4.8:1 on white. */
+  --ink: #0f172a;
+  --ink-secondary: #52525b;
+  --ink-muted: #71717a;
+
+  /* Hairlines. Kept genuinely faint — borders are structure, not decoration. */
+  --line: #e6e8ec;
+  --line-strong: #d4d7dd;
+
+  /* Brand — a deep, trustworthy blue. White-on-brand is 6.6:1. */
+  --brand: #1c5cab;
+  --brand-hover: #184f95;
+  --brand-ink: #1c5cab;        /* brand as text on light: 6.6:1 */
+  --brand-wash: #eef4fc;       /* selected nav row, subtle fills */
+  --brand-wash-strong: #dce9f8;
+
+  /* Status. Fixed roles, never themed, never reused as series colors.
+     The MARK colors below are for dots/icons; the TEXT colors are darker
+     steps because #fab219 and #ec835a are sub-3:1 on white — which is
+     exactly why every status in this UI ships an icon AND a label. */
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --good-wash: #e7f6e7;
+  --warning: #fab219;
+  --warning-ink: #8a5a00;
+  --warning-wash: #fdf3e0;
+  --serious: #ec835a;
+  --serious-ink: #9a4a22;
+  --serious-wash: #fdeee7;
+  --critical: #d03b3b;
+  --critical-ink: #b3211f;
+  --critical-wash: #fdecec;
+
+  /* Elevation — soft and low. Healthcare UI should feel calm, not floaty. */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 2px 4px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.07);
+  --shadow-lg: 0 8px 28px rgba(15, 23, 42, 0.10);
 }
 
-html, body { height: 100%; }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #0c1116;
+    --surface: #131a22;
+    --surface-sunken: #0f151c;
+    --surface-hover: #1a222c;
+
+    --ink: #f4f6f8;            /* 16.2:1 */
+    --ink-secondary: #a1aab8;  /* 7.5:1  */
+    --ink-muted: #8b95a3;
+
+    --line: #232c37;
+    --line-strong: #2f3945;
+
+    --brand: #3987e5;          /* stepped for the dark surface, 4.8:1 */
+    --brand-hover: #5598e7;
+    --brand-ink: #86b6ef;
+    --brand-wash: #16233a;
+    --brand-wash-strong: #1c2f4d;
+
+    --good: #0ca30c;
+    --good-ink: #4ade4a;
+    --good-wash: #0f2410;
+    --warning: #fab219;
+    --warning-ink: #fab219;    /* 9.6:1 on dark — the bright step is correct here */
+    --warning-wash: #2a1f08;
+    --serious: #ec835a;
+    --serious-ink: #f0a084;
+    --serious-wash: #2a1810;
+    --critical: #d03b3b;
+    --critical-ink: #f07171;   /* 6.1:1 */
+    --critical-wash: #2a1213;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.5);
+  }
+}
+
+html,
 body {
-  @apply bg-paper text-ink font-body antialiased;
+  height: 100%;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11', 'ss01';   /* Inter: friendlier 1/l/a shapes */
+}
+
+/* Large standalone numbers use PROPORTIONAL figures — tabular-nums gives every
+   digit the width of a zero, which makes a value like 121 look loose at display
+   sizes. Tabular is reserved for columns that must align vertically. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus: always visible, always the brand ring. Healthcare staff keyboard-
+   navigate far more than consumer users do. */
+*:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Respect users who ask for less motion — vestibular safety, not a nicety. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+::selection {
+  background: var(--brand-wash-strong);
 }

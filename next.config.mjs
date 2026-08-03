@@ -21,8 +21,11 @@ const isDev = process.env.NODE_ENV !== 'production';
 const csp = [
   `default-src 'self'`,
   `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
-  `font-src 'self' https://fonts.gstatic.com data:`,
+  // next/font self-hosts Inter from our own origin, so Google's font hosts are
+  // no longer reachable-by-policy at all — one less third party able to receive
+  // a request from a page showing patient records.
+  `style-src 'self' 'unsafe-inline'`,
+  `font-src 'self' data:`,
   `img-src 'self' data: blob:`,
   `connect-src ${connectSrc}`,
   `worker-src 'self'`,
