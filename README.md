@@ -36,10 +36,11 @@ What remains is configuration, not construction — Step 0 below.
 
 ## Step 0 — unblock (do these first)
 
-1. **Add a real clinician.** Nobody can currently consult or prescribe. All
-   eight pharmacy staff are ADMIN / PHARMACIST / RECEPTIONIST by design, and
-   prescribing is restricted to `CLINICIAN`. Until a clinical officer exists
-   with that role, the loop cannot run end to end with real accounts.
+1. **Add a real clinician** — and then revert
+   `0007_admin_can_prescribe_TEMPORARY.sql`. For testing, ADMIN accounts can
+   currently consult and prescribe, so any of the three admins can walk the
+   entire loop alone. PHARMACIST and RECEPTIONIST still cannot, and every
+   action remains attributed to whoever took it.
 2. **Paste `SUPABASE_SERVICE_ROLE_KEY`** into `.env.local` (Supabase dashboard
    → Project Settings → API keys → `service_role`). Both integration routes
    return 503 without it.
@@ -87,6 +88,11 @@ round trip is the Phase 1 exit criterion.
 
 ## Before real patients
 
+- **Revert `0007_admin_can_prescribe_TEMPORARY.sql`.** ADMIN can currently
+  write consult notes and prescriptions so one account can walk the whole loop
+  during testing. Prescribing is a regulated act; put it back to CLINICIAN as
+  soon as a real clinical officer has an account. It's a one-line change —
+  the file says exactly which line.
 - **Delete the four `@vitcare.test` accounts.** They share a known password
   and can read patient records.
 - **Custom SMTP.** Supabase's shared sender rate-limits at ~4 emails/hour,
