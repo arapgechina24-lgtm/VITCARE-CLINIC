@@ -10,6 +10,28 @@ import type { WebhookDeps } from './webhook-handler';
 import type { OutboxStore, OutboxRow } from './pos-client-outbox';
 import type { PrescriptionStatus, PrescriptionStatusEvent, CreatePrescription } from './prescription-contract';
 
+/** Error codes raised by apply_status_event (0009). */
+export const PG_ILLEGAL_TRANSITION = 'P0001';
+export const PG_PRESCRIPTION_NOT_FOUND = 'P0002';
+
+/** The row-locked re-check rejected a transition the handler's pre-flight let
+ *  through. Distinct from a generic failure because POS must treat it as
+ *  permanent — retrying an illegal transition can never succeed. */
+export class StatusConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StatusConflictError';
+  }
+}
+
+/** The prescription disappeared between the pre-flight read and the apply. */
+export class PrescriptionNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PrescriptionNotFoundError';
+  }
+}
+
 export function makeWebhookDeps(supabase: SupabaseClient, signingSecret: string): WebhookDeps {
   return {
     signingSecret,
@@ -25,26 +47,28 @@ export function makeWebhookDeps(supabase: SupabaseClient, signingSecret: string)
     },
 
     async applyStatusEvent(event: PrescriptionStatusEvent) {
-      const update: Record<string, unknown> = { status: event.status, updated_at: new Date().toISOString() };
-      if (event.totalAmountCents !== undefined) update.total_amount_cents = event.totalAmountCents;
+      // One call, one transaction, prescription row locked — see
+      // 0009_apply_status_event.sql for what this replaced and why. The three
+      // defects it fixes were: line items written without checking they belong
+      // to this prescription (a cross-patient write), no transaction across the
+      // three tables, and a check-then-act race on the status.
+      const { error } = await supabase.rpc('apply_status_event', {
+        p_event_id: event.eventId,
+        p_prescription_id: event.prescriptionId,
+        p_status: event.status,
+        p_total_amount_cents: event.totalAmountCents ?? null,
+        p_reason: event.reason ?? null,
+        p_lines: event.lines ?? null,
+      });
+      if (!error) return;
 
-      const { error: updateError } = await supabase.from('prescriptions').update(update).eq('id', event.prescriptionId);
-      if (updateError) throw updateError;
-
-      if (event.lines?.length) {
-        for (const line of event.lines) {
-          const { error } = await supabase
-            .from('prescription_items')
-            .update({ dispensed_quantity: line.dispensedQuantity, line_status: line.lineStatus })
-            .eq('id', line.itemId);
-          if (error) throw error;
-        }
-      }
-
-      const { error: insertError } = await supabase
-        .from('processed_webhook_events')
-        .insert({ event_id: event.eventId, prescription_id: event.prescriptionId, status: event.status });
-      if (insertError) throw insertError;
+      // The row-locked re-check beat the handler's pre-flight. Translate to
+      // typed errors so the route answers 409/404 — the same codes the
+      // pre-flight would have given — instead of a 500 that POS retries
+      // forever against a permanently illegal transition.
+      if (error.code === PG_ILLEGAL_TRANSITION) throw new StatusConflictError(error.message);
+      if (error.code === PG_PRESCRIPTION_NOT_FOUND) throw new PrescriptionNotFoundError(error.message);
+      throw error;
     },
 
     async audit(action, prescriptionId) {
