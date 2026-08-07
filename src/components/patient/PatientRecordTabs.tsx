@@ -5,6 +5,7 @@ import { VitalsPanel } from './VitalsPanel';
 import { HistoryPanel } from './HistoryPanel';
 import { PrescriptionsPanel } from './PrescriptionsPanel';
 import { ClinicalNoteEditor } from './ClinicalNoteEditor';
+import { RestrictedPanel } from './RestrictedPanel';
 import { activeEncounter, type PatientRecord } from '@/lib/patient-record';
 
 /**
@@ -16,12 +17,21 @@ export function PatientRecordTabs({
   record,
   canWriteNotes,
   noteBlockedReason,
+  role,
 }: {
   record: PatientRecord;
   canWriteNotes: boolean;
   noteBlockedReason?: string;
+  role: string;
 }) {
   const open = activeEncounter(record.encounters);
+
+  // Derived from what the SERVER said it returned, not from the role string.
+  // If the two ever disagree the server is right — it is the one that decided
+  // which keys to build into the payload.
+  const scope = record.scope ?? 'FULL';
+  const seesClinical = scope === 'FULL';
+  const seesObservations = scope === 'FULL' || scope === 'OBSERVATIONS';
 
   return (
     <Tabs
@@ -57,19 +67,34 @@ export function PatientRecordTabs({
         {
           id: 'vitals',
           label: 'Vitals',
-          content: <VitalsPanel encounters={record.encounters} />,
+          content: seesObservations ? (
+            <VitalsPanel encounters={record.encounters} />
+          ) : (
+            <RestrictedPanel what="Vitals" role={role} />
+          ),
         },
         {
           id: 'history',
           label: 'Medical history',
-          count: record.encounters.length,
-          content: <HistoryPanel encounters={record.encounters} />,
+          // No count when restricted: "0" would read as "this patient has never
+          // been seen", and a real count would itself disclose how much history
+          // there is.
+          count: seesClinical ? record.encounters.length : undefined,
+          content: seesClinical ? (
+            <HistoryPanel encounters={record.encounters} />
+          ) : (
+            <RestrictedPanel what="Consultation notes" role={role} />
+          ),
         },
         {
           id: 'prescriptions',
           label: 'Prescriptions',
-          count: record.prescriptions.length,
-          content: <PrescriptionsPanel prescriptions={record.prescriptions} />,
+          count: seesClinical ? record.prescriptions.length : undefined,
+          content: seesClinical ? (
+            <PrescriptionsPanel prescriptions={record.prescriptions} />
+          ) : (
+            <RestrictedPanel what="Prescriptions" role={role} />
+          ),
         },
         {
           id: 'labs',

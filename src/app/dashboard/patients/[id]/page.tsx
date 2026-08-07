@@ -111,6 +111,7 @@ export default async function PatientPage({ params }: { params: Promise<{ id: st
         <CardBody className="pt-4">
           <PatientRecordTabs
             record={record}
+            role={staff.role}
             canWriteNotes={canWriteNotes}
             noteBlockedReason={
               canWriteNotes ? undefined : 'Only a clinician can record consultation notes.'

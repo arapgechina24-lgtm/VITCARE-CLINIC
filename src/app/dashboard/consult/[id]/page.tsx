@@ -1,8 +1,11 @@
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
 import ConsultForm from './ConsultForm';
+import { requireRole } from '@/lib/require-role';
 
 export default async function ConsultPage({ params }: { params: Promise<{ id: string }> }) {
+  // Consultation notes are a clinical act; save_consult_notes enforces it too.
+  await requireRole('CLINICIAN', 'ADMIN');
   const { id } = await params;
   const supabase = await supabaseServer();
 

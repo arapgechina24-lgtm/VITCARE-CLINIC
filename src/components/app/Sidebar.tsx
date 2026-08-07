@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, CalendarDays, LayoutDashboard, Pill, Receipt, Settings, Users, UserPlus, X,
+  Activity, CalendarDays, LayoutDashboard, Pill, Receipt, ScrollText, Settings, Users, UserPlus, X,
 } from 'lucide-react';
 
 /**
@@ -30,7 +30,17 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
     heading: 'Clinical',
     items: [
       { href: '/dashboard', label: 'Overview', icon: LayoutDashboard, built: true },
-      { href: '/dashboard/patients', label: 'Patients', icon: Users, built: true },
+      // Open to every chart-facing job. What they SEE inside a record is
+      // decided by get_patient_record's projection, not by this list — a
+      // receptionist opening a patient gets identity and visit state only.
+      // Hiding the link would stop them doing the job they are there for.
+      {
+        href: '/dashboard/patients',
+        label: 'Patients',
+        icon: Users,
+        built: true,
+        roles: ['RECEPTIONIST', 'NURSE', 'CLINICIAN', 'LAB_TECH', 'ADMIN', 'AUDITOR'],
+      },
       {
         href: '/dashboard/register',
         label: 'Register patient',
@@ -45,12 +55,18 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
     heading: 'Operations',
     items: [
       { href: '/dashboard/pharmacy', label: 'Pharmacy', icon: Pill, built: false },
-      { href: '/dashboard/billing', label: 'Billing', icon: Receipt, built: false },
+      { href: '/dashboard/billing', label: 'Billing', icon: Receipt, built: false, roles: ['ADMIN'] },
     ],
   },
   {
     heading: 'Administration',
-    items: [{ href: '/dashboard/settings', label: 'Settings', icon: Settings, built: false }],
+    // Settings and the audit trail are administrative, not clinical. AUDITOR
+    // is included on the audit log because reviewing it is the entire reason
+    // that role exists.
+    items: [
+      { href: '/dashboard/audit', label: 'Audit log', icon: ScrollText, built: false, roles: ['ADMIN', 'AUDITOR'] },
+      { href: '/dashboard/settings', label: 'Settings', icon: Settings, built: false, roles: ['ADMIN'] },
+    ],
   },
 ];
 

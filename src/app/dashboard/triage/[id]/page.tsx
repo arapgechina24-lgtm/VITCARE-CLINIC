@@ -1,8 +1,11 @@
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
 import TriageForm from './TriageForm';
+import { requireRole } from '@/lib/require-role';
 
 export default async function TriagePage({ params }: { params: Promise<{ id: string }> }) {
+  // Triage is a nursing act. can_triage() enforces the same set server-side.
+  await requireRole('NURSE', 'CLINICIAN', 'ADMIN');
   const { id } = await params;
   const supabase = await supabaseServer();
 

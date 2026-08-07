@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
 import PrescribeForm from './PrescribeForm';
 import type { AllergyStatus, RecordedAllergy } from '@/lib/allergy-check';
+import { requireRole } from '@/lib/require-role';
 
 interface PatientRecord {
   patient: {
@@ -15,6 +16,9 @@ interface PatientRecord {
 }
 
 export default async function PrescribePage({ params }: { params: Promise<{ id: string }> }) {
+  // Mirrors can_prescribe(). ADMIN is here only because of the 0007 testing
+  // concession — remove it from BOTH places when that is reverted.
+  await requireRole('CLINICIAN', 'ADMIN');
   const { id } = await params;
   const supabase = await supabaseServer();
 

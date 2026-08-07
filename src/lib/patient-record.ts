@@ -3,6 +3,7 @@
  * clinical interpretation the UI needs.
  */
 import type { AllergyStatus, RecordedAllergy } from './allergy-check';
+import type { RecordScope } from './roles';
 
 export interface PatientVitals {
   tempC?: string | null;
@@ -68,6 +69,10 @@ export interface PatientRecord {
   allergies?: RecordedAllergy[];
   encounters: RecordEncounter[];
   prescriptions: RecordPrescription[];
+  /** How much the server actually returned for this caller's role. Absent
+   *  from records fetched before 0013; treated as FULL only because every
+   *  such caller was already unrestricted. */
+  scope?: RecordScope;
 }
 
 /**
