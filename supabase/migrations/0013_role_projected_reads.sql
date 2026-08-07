@@ -29,9 +29,40 @@
 
 -- ── 1. The lab technician role ─────────────────────────────────────────────
 -- The check constraint had no LAB_TECH, so the lab workflow had nowhere to
--- live. Constraint is dropped and recreated rather than altered because
--- Postgres has no ALTER ... MODIFY CHECK.
-alter table users drop constraint if exists users_role_check;
+-- live. Postgres has no ALTER ... MODIFY CHECK, so it must be dropped and
+-- recreated.
+--
+-- The constraint was declared INLINE and UNNAMED in 0000:
+--     role text not null check (role in ('ADMIN', …))
+-- so its name was auto-generated. The convention gives `users_role_check`, but
+-- that is a convention, not a guarantee — if that name had been taken Postgres
+-- would have produced `users_role_check1`. A plain
+-- `drop constraint if exists users_role_check` would then silently do nothing,
+-- the new constraint would be added alongside the old one, and the OLD one
+-- would still reject LAB_TECH. The migration would report success and the
+-- failure would surface later as a confusing insert error.
+--
+-- So: find the constraint by what it DOES, not by what it is called. Any CHECK
+-- on `users` mentioning the role vocabulary is the one being replaced.
+do $$
+declare
+  v_name text;
+begin
+  for v_name in
+    select con.conname
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    where nsp.nspname = 'public'
+      and rel.relname = 'users'
+      and con.contype = 'c'
+      and pg_get_constraintdef(con.oid) like '%RECEPTIONIST%'
+  loop
+    execute format('alter table users drop constraint %I', v_name);
+    raise notice 'dropped previous role constraint: %', v_name;
+  end loop;
+end $$;
+
 alter table users add constraint users_role_check
   check (role in ('ADMIN','CLINICIAN','NURSE','RECEPTIONIST','PHARMACIST','LAB_TECH','AUDITOR'));
 
