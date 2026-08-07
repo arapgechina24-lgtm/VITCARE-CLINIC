@@ -17,8 +17,16 @@ export async function requireStaffContext(): Promise<StaffContext> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: profile } = await supabase.from('users').select('full_name, role').eq('id', user.id).maybeSingle();
-  if (!profile) redirect('/login');
+  // `active` is checked here for the same reason api-auth.ts checks it: a
+  // deactivated account may still hold a valid, auto-refreshing Supabase
+  // session, so the row in `users` is the only thing that can turn them away.
+  // Without this an offboarded staff member kept the entire dashboard.
+  const { data: profile } = await supabase
+    .from('users')
+    .select('full_name, role, active')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (!profile || !profile.active) redirect('/login');
 
   const { data: membership } = await supabase
     .from('user_site_memberships')
