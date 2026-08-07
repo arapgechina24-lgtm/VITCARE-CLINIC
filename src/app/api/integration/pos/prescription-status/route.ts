@@ -5,6 +5,7 @@ import {
   StatusConflictError,
   PrescriptionNotFoundError,
 } from '@/modules/prescriptions/integration/supabase-deps';
+import { rateLimit, clientKey, tooManyRequests } from '@/lib/rate-limit';
 
 // handlePosWebhook verifies the HMAC with node:crypto, which the edge runtime
 // does not provide.
@@ -17,6 +18,13 @@ export const dynamic = 'force-dynamic';
 // (see POS_SIGNING_SECRET below), exactly like vitcare-pos's own M-Pesa
 // callback route trusts a shared secret instead of a staff session.
 export async function POST(request: Request) {
+  // Throttled before the HMAC check. Forging a signature is computationally
+  // hopeless, but an unthrottled public endpoint is still free CPU for anyone
+  // who wants to spend ours. POS drains in batches, so the ceiling is set well
+  // above any legitimate burst.
+  const limit = rateLimit(`pos-webhook:${clientKey(request.headers)}`, 240, 60_000);
+  if (!limit.ok) return tooManyRequests(limit);
+
   const secret = process.env.POS_SIGNING_SECRET;
   if (!secret) {
     return Response.json({ error: 'integration not configured' }, { status: 503 });

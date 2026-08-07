@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { supabaseService } from '@/lib/supabase/server';
 import { PosClient, drainOutbox } from '@/modules/prescriptions/integration/pos-client-outbox';
 import { makeOutboxStore } from '@/modules/prescriptions/integration/supabase-deps';
+import { authorizeDrain } from '@/modules/prescriptions/integration/drain-auth';
+import { rateLimit, clientKey, tooManyRequests } from '@/lib/rate-limit';
 
 /**
  * Drains integration_outbox — call this on a schedule (every 30s per the
@@ -14,8 +16,19 @@ import { makeOutboxStore } from '@/modules/prescriptions/integration/supabase-de
  * scripts/setup-windows-task.ps1 / com.vitcare.pos.plist for that pattern.
  */
 export async function POST(req: NextRequest) {
-  const secret = process.env.OUTBOX_DRAIN_SECRET;
-  if (!secret || req.nextUrl.searchParams.get('token') !== secret) {
+  // Rate limit BEFORE the secret check, so a brute-force attempt is throttled
+  // rather than merely rejected. A legitimate scheduler runs twice a minute;
+  // 30 leaves generous headroom for a manual re-run during an incident.
+  const limit = rateLimit(`outbox-drain:${clientKey(req.headers)}`, 30, 60_000);
+  if (!limit.ok) return tooManyRequests(limit);
+
+  // Authorization header, not a query string — query strings are written to
+  // access logs, proxy logs and browser history, and this secret drives the
+  // whole integration. Constant-time comparison; see integration/drain-auth.ts.
+  //
+  //   curl -X POST http://localhost:3001/api/prescriptions/outbox-drain \
+  //     -H "Authorization: Bearer $OUTBOX_DRAIN_SECRET"
+  if (!authorizeDrain(req.headers, process.env.OUTBOX_DRAIN_SECRET)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
