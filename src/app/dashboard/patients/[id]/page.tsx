@@ -6,7 +6,8 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { Card, CardBody } from '@/components/ui/Card';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PatientRecordTabs } from '@/components/patient/PatientRecordTabs';
-import { ageFrom, activeEncounter, type PatientRecord } from '@/lib/patient-record';
+import { AllergySection } from '@/components/patient/AllergySection';
+import { ageFrom, activeEncounter, allergyStatusOf, type PatientRecord } from '@/lib/patient-record';
 
 /**
  * The patient record.
@@ -95,6 +96,16 @@ export default async function PatientPage({ params }: { params: Promise<{ id: st
           </div>
         </CardBody>
       </Card>
+
+      {/* Above the tabs, never inside one. Allergies are not one view among
+          five — a fact you can tab away from is a fact you will. */}
+      <AllergySection
+        patientId={p.id}
+        status={allergyStatusOf(record)}
+        allergies={record.allergies ?? []}
+        reviewedAt={p.allergies_reviewed_at}
+        canEdit={['CLINICIAN', 'NURSE', 'ADMIN'].includes(staff.role)}
+      />
 
       <Card>
         <CardBody className="pt-4">

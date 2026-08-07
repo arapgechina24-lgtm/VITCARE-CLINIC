@@ -2,6 +2,7 @@
  * Shapes returned by the `get_patient_record` RPC, plus the small amount of
  * clinical interpretation the UI needs.
  */
+import type { AllergyStatus, RecordedAllergy } from './allergy-check';
 
 export interface PatientVitals {
   tempC?: string | null;
@@ -58,9 +59,26 @@ export interface PatientRecord {
     phone: string | null;
     national_id: string | null;
     created_at: string;
+    /** Optional because rows written before 0010 have no value. Read it
+     *  through `allergyStatusOf`, never directly — a missing status must
+     *  resolve to UNRECORDED, not to "nothing to worry about". */
+    allergy_status?: AllergyStatus | null;
+    allergies_reviewed_at?: string | null;
   };
+  allergies?: RecordedAllergy[];
   encounters: RecordEncounter[];
   prescriptions: RecordPrescription[];
+}
+
+/**
+ * The allergy status of a record, defaulting to UNRECORDED.
+ *
+ * The default is the whole point. A patient registered before allergies
+ * existed in this schema has no status, and the only safe reading of "we have
+ * no information" is "go and ask" — never an implicit all-clear.
+ */
+export function allergyStatusOf(record: PatientRecord): AllergyStatus {
+  return record.patient.allergy_status ?? 'UNRECORDED';
 }
 
 /** Whole years, computed from the date of birth. Null when no DOB is recorded. */
