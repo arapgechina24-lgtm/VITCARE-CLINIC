@@ -16,7 +16,8 @@
     "db:pending": "node scripts/pending-sql.mjs",
     "db:backup": "node scripts/backup.mjs",
     "db:backup:verify": "node scripts/backup.mjs --verify",
-    "db:backup:list": "node scripts/backup.mjs --list"
+    "db:backup:list": "node scripts/backup.mjs --list",
+    "key:check": "node scripts/check-service-key.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
