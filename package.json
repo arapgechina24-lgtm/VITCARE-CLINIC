@@ -13,7 +13,10 @@
     "db:drift": "node scripts/check-drift.mjs",
     "db:baseline": "node scripts/check-drift.mjs --save",
     "db:verify": "node scripts/verify-migrations.mjs",
-    "db:pending": "node scripts/pending-sql.mjs"
+    "db:pending": "node scripts/pending-sql.mjs",
+    "db:backup": "node scripts/backup.mjs",
+    "db:backup:verify": "node scripts/backup.mjs --verify",
+    "db:backup:list": "node scripts/backup.mjs --list"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

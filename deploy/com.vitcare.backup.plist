@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily backup of BOTH Supabase projects.
+
+    cp deploy/com.vitcare.backup.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.vitcare.backup.plist
+
+  Runs at 02:15. Late enough that the pharmacy is closed, early enough that a
+  failure is visible before opening.
+
+  StartCalendarInterval, not StartInterval: launchd runs a missed calendar job
+  once the Mac wakes, so a machine switched off overnight still gets its
+  backup rather than silently skipping a day.
+
+  IT ALSO KEEPS THE PROJECTS AWAKE. Supabase free-tier projects pause after 7
+  days without a request, and any API call resets that timer. This already bit
+  the pharmacy on 2026-08-01. A daily backup is both the backup and the
+  heartbeat.
+
+  Failures land in vitcare-backup.error.log and the script exits non-zero. If
+  a table cannot be read it is recorded as an error in the manifest rather
+  than written as an empty file — a backup that silently captures nothing is
+  the failure mode worth engineering against.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vitcare.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-c</string>
+        <string>export PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH"; cd /Users/arapg/vitcare-clinic &amp;&amp; node scripts/backup.mjs &amp;&amp; node scripts/backup.mjs --verify</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/arapg/Library/Logs/vitcare-backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/arapg/Library/Logs/vitcare-backup.error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/arapg/vitcare-clinic</string>
+</dict>
+</plist>

@@ -1,9 +1,10 @@
 {
-  "capturedAt": "2026-08-08T17:21:06.294Z",
+  "capturedAt": "2026-08-08T17:37:23.047Z",
   "functions": {
     "apply_status_event": "dff12643e932a06e4c60859441fcf48d",
     "assert_allergies_reviewed": "235a731f63572d5d7232a03cabd34d22",
     "audit_row_change": "0c42abdc154f8a8ffc0b84e0bcdc8510",
+    "auth_identity_export": "78f6698d6346ac598a0865bd371fe9ec",
     "can_prescribe": "859a433b600e90d686f9036022227072",
     "can_read_clinical": "e4ef6cd592f1fc0119e584eb390ee793",
     "can_read_observations": "36e6c85cccaebb6e0592b097b8eb279b",
