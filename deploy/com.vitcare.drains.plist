@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Drains both integration outboxes every 60 seconds.
+
+    cp deploy/com.vitcare.drains.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.vitcare.drains.plist
+
+  WITHOUT THIS NOTHING MOVES. The outbox pattern guarantees a prescription is
+  never lost — it is written in the same transaction as the prescription
+  itself — but delivery only happens when something drains it. Unscheduled,
+  every script the clinic writes sits in a queue and the pharmacist never sees
+  it. That is exactly what happened between 3 and 8 August.
+
+  StartInterval rather than KeepAlive: this is a short-lived job, not a daemon.
+  60s is well inside the 5-minute HMAC replay window on both sides, so a
+  delivery is never signed so long ago that the receiver rejects it.
+
+  Failures are visible in the log rather than fatal. A drain that cannot reach
+  the other side should retry on the next tick — the outbox already handles
+  backoff and marks genuinely-dead events failed, so there is nothing for
+  launchd to do beyond running it again.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vitcare.drains</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/arapg/vitcare-clinic/scripts/drain-both.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/arapg/Library/Logs/vitcare-drains.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/arapg/Library/Logs/vitcare-drains.error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/arapg/vitcare-clinic</string>
+</dict>
+</plist>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  VITCARE-CLINIC LaunchAgent.
+
+    cp deploy/com.vitcare.clinic.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.vitcare.clinic.plist
+
+  Runs on port 3001. Port 3000 is the live pharmacy till — do not change this
+  to 3000 for any reason.
+
+  KeepAlive restarts it if it dies. A clinic that is down means reception
+  cannot register the person standing at the desk, so an unattended restart is
+  worth more than a clean shutdown.
+
+  Deliberately a LaunchAgent, matching com.vitcare.pos: the process needs no
+  privilege beyond the user's own home directory and its .env.local, and
+  running a patient-record server as root would add risk for nothing.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vitcare.clinic</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/arapg/vitcare-clinic/scripts/start-clinic-mac.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- If it is crash-looping, back off rather than spinning the CPU. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/arapg/Library/Logs/vitcare-clinic.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/arapg/Library/Logs/vitcare-clinic.error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/arapg/vitcare-clinic</string>
+</dict>
+</plist>
