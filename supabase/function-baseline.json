@@ -1,0 +1,26 @@
+{
+  "capturedAt": "2026-08-08T15:42:57.575Z",
+  "functions": {
+    "apply_status_event": "dff12643e932a06e4c60859441fcf48d",
+    "assert_allergies_reviewed": "235a731f63572d5d7232a03cabd34d22",
+    "audit_row_change": "0c42abdc154f8a8ffc0b84e0bcdc8510",
+    "can_prescribe": "859a433b600e90d686f9036022227072",
+    "can_read_clinical": "e4ef6cd592f1fc0119e584eb390ee793",
+    "can_read_observations": "36e6c85cccaebb6e0592b097b8eb279b",
+    "can_triage": "07f083d8d6169b0a74de9c02fe4f220b",
+    "function_fingerprints": "30772f4d2a3e5fba6936445bcb8daa78",
+    "get_patient": "c908ed037b2f0d02ac8b6281fcc0e479",
+    "get_patient_record": "780c467f45029bff2f4e8c9fc8063c86",
+    "has_role": "6d41ff0510a76a02935bcd65d2f2b03d",
+    "is_allowed_transition": "434d8462ab2592d341f44126bce1938e",
+    "list_encounters": "480db443a532daa2b81a329c1f1f1756",
+    "list_patients": "2185c84281172a5333bd3e4eecdb29fb",
+    "list_patients_summary": "4b14396f366f6e871fd8cc822caaeb97",
+    "register_patient": "5676540a123372c9a9e4b13ab3380f68",
+    "save_consult_notes": "f35e8fe6c68126a988e493daeacac1ca",
+    "set_patient_allergies": "ebd3c4e32a2e50b3b4b15dcb813bb5bd",
+    "submit_prescription": "fdd6fbd026cff463a14b7aa9f1644123",
+    "submit_triage": "13593f19fe6f8f8559a51b5bfb2e9cc8",
+    "user_sites": "fb4928c0f9dd6becd956a5ad83c7c5ac"
+  }
+}

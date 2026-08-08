@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "check:rls": "node scripts/check-rls.mjs"
+    "check:rls": "node scripts/check-rls.mjs",
+    "sql:check": "node scripts/check-sql.mjs",
+    "db:drift": "node scripts/check-drift.mjs",
+    "db:baseline": "node scripts/check-drift.mjs --save",
+    "db:verify": "node scripts/verify-migrations.mjs",
+    "db:pending": "node scripts/pending-sql.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
