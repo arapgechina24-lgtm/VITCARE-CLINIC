@@ -66,7 +66,14 @@ begin
   if not found then
     raise exception 'unknown encounter';
   end if;
-  if v_encounter.site_id not in (select site_id from user_sites(auth.uid())) then
+  -- `us.site_id`, aliased. 0002 on disk has this unaliased, but the function
+  -- actually running in the database was changed to alias it — a second, quieter
+  -- instance of the same file/database drift 0007 recorded. Matching the version
+  -- that is proven in production rather than the one in the file, and aliasing
+  -- is unambiguously safe regardless: an unqualified `site_id` inside a function
+  -- is one RETURNS TABLE column away from resolving to the wrong thing, which is
+  -- exactly how list_encounters broke in 0003.
+  if v_encounter.site_id not in (select us.site_id from user_sites(auth.uid()) us) then
     raise exception 'not authorized for this site';
   end if;
 
