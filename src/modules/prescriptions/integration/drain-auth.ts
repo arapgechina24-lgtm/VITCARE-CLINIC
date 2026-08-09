@@ -20,6 +20,19 @@ import { timingSafeEqual } from 'node:crypto';
  *
  * Accepts `Authorization: Bearer <token>`, with `X-Drain-Token: <token>` as a
  * fallback for schedulers that cannot set an Authorization header.
+ *
+ * ── THIS FILE HAS A TWIN ──────────────────────────────────────────────────
+ * VITCARE-POS carries its own copy at src/lib/integration/drain-auth.ts,
+ * because the two repos deploy independently and neither depends on the
+ * other. Both sides of the drain must agree on how a credential is read and
+ * compared, so the accompanying drain-auth.test.ts is kept byte-identical in
+ * both repos — that shared test file, not the implementation, is what pins
+ * the behaviour.
+ *
+ * The implementations are NOT byte-identical and do not need to be: the POS
+ * copy additionally exports `secretsMatch`, which its M-Pesa callback reuses.
+ * If you change how a token is read or compared, change it in both, and
+ * change the shared test in both.
  */
 export function readDrainToken(headers: Headers): string | null {
   const auth = headers.get('authorization');
