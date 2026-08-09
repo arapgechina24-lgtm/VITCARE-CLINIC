@@ -1,0 +1,12 @@
+# Deploy the app source only. Patterns are ANCHORED with a leading slash —
+# an unanchored `supabase/` also matches src/lib/supabase/ and silently
+# removes the Supabase client from the upload, which broke the first deploy
+# with 19 module-not-found errors.
+.env*
+/supabase/
+/scripts/
+/docs/
+/deploy/
+node_modules/
+.next/
+*.log
