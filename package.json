@@ -17,7 +17,8 @@
     "db:backup": "node scripts/backup.mjs",
     "db:backup:verify": "node scripts/backup.mjs --verify",
     "db:backup:list": "node scripts/backup.mjs --list",
-    "key:check": "node scripts/check-service-key.mjs"
+    "key:check": "node scripts/check-service-key.mjs",
+    "health": "node scripts/health.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
