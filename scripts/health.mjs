@@ -85,19 +85,57 @@ try {
 
 /* ── databases ────────────────────────────────────────────────────────── */
 section('databases');
+const CLINIC_ENV = join(ROOT, '.env.local');
 const projects = [
-  { name: 'clinic', url: env(join(ROOT, '.env.local'), 'NEXT_PUBLIC_SUPABASE_URL'), key: env(join(ROOT, '.env.local'), 'SUPABASE_SERVICE_ROLE_KEY') },
-  { name: 'pharmacy', url: env(TILL_ENV, 'NEXT_PUBLIC_SUPABASE_URL'), key: env(TILL_ENV, 'SUPABASE_SERVICE_ROLE_KEY') },
+  {
+    name: 'clinic',
+    url: env(CLINIC_ENV, 'NEXT_PUBLIC_SUPABASE_URL'),
+    key: env(CLINIC_ENV, 'SUPABASE_SERVICE_ROLE_KEY'),
+    anon: env(CLINIC_ENV, 'NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+  },
+  {
+    name: 'pharmacy',
+    url: env(TILL_ENV, 'NEXT_PUBLIC_SUPABASE_URL'),
+    key: env(TILL_ENV, 'SUPABASE_SERVICE_ROLE_KEY'),
+    anon: env(TILL_ENV, 'NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+  },
 ];
 for (const p of projects) {
   if (!p.url || !p.key) { fail(`${p.name} db`, 'URL or service key missing'); continue; }
+  const base = p.url.replace(/\/$/, '');
   try {
-    const r = await rest(p.url.replace(/\/$/, ''), p.key, 'sites?select=id&limit=1');
+    const r = await rest(base, p.key, 'sites?select=id&limit=1');
     // A paused free-tier project is the specific failure worth naming.
-    if (r.ok) pass(`${p.name} db reachable`, 'not paused');
-    else if (r.status === 404) pass(`${p.name} db reachable`, 'not paused');
-    else fail(`${p.name} db`, `HTTP ${r.status} — paused, or the key is revoked`);
+    if (r.ok || r.status === 404) pass(`${p.name} db reachable`, 'not paused');
+    else fail(`${p.name} db`, `HTTP ${r.status} — paused, or the service key is revoked`);
   } catch (e) { fail(`${p.name} db`, e.message); }
+
+  // THE ANON KEY, separately. This section used to test only the service key,
+  // and so reported everything healthy on 2026-08-08 while nobody could sign
+  // in to the clinic at all: legacy API keys had been disabled, and the anon
+  // key was a legacy JWT. The service key had already been migrated to a
+  // modern sb_secret_ one, so every check kept passing.
+  //
+  // The lesson is that a health check must exercise the credential USERS
+  // authenticate with, not just the one the server uses. They can fail
+  // independently, and the user-facing one failing is the more visible outage.
+  if (!p.anon) { fail(`${p.name} sign-in`, 'NEXT_PUBLIC_SUPABASE_ANON_KEY not set'); continue; }
+  try {
+    const r = await fetch(`${base}/auth/v1/settings`, {
+      headers: { apikey: p.anon }, signal: AbortSignal.timeout(15000),
+    });
+    if (r.ok) {
+      pass(`${p.name} sign-in`, p.anon.startsWith('sb_publishable_') ? 'modern publishable key' : 'legacy key (still enabled)');
+      if (!p.anon.startsWith('sb_publishable_')) {
+        warn(`${p.name} anon key`, 'still a LEGACY key — migrate before legacy keys are disabled, or sign-in stops dead');
+      }
+    } else {
+      const body = await r.text().catch(() => '');
+      fail(`${p.name} sign-in`, /legacy/i.test(body)
+        ? 'LEGACY API KEYS DISABLED — nobody can sign in. Swap NEXT_PUBLIC_SUPABASE_ANON_KEY to the sb_publishable_ key, then REBUILD (it is baked into the client bundle).'
+        : `HTTP ${r.status} — nobody can sign in`);
+    }
+  } catch (e) { fail(`${p.name} sign-in`, e.message); }
 }
 
 /* ── the queues: what went unnoticed for five days ────────────────────── */
