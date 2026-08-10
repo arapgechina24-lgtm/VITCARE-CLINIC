@@ -1,0 +1,63 @@
+name: CI
+
+# The pre-commit hook says it best: "Migrations are pasted BY HAND into a SQL
+# editor — there is no CI step between this repo and the clinical database, so
+# the syntax gate has to live here." This is that missing CI step. The hook
+# stays, because it catches things before a commit exists; this catches the
+# commits that arrive without it (a different machine, --no-verify, a merge).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://ci.example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install from lockfile
+        run: npm ci
+
+      # RLS is a merge blocker, not a follow-up task: a table created without
+      # `enable row level security` fails here.
+      - name: RLS policy check
+        run: npm run check:rls
+
+      # Parses every migration with the real PostgreSQL grammar, so a
+      # migration that would not apply cannot reach the hand-paste step.
+      # Offline — pg-query-emscripten, no database needed.
+      - name: SQL syntax check (all migrations)
+        run: npm run sql:check
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+# Deliberately NOT here: db:drift, db:verify and health. All three need
+# credentials for the live clinical database. Putting those in CI would mean
+# storing production credentials in GitHub to check a database that CI has no
+# business touching — they stay operator-run, from the machine that owns them.
