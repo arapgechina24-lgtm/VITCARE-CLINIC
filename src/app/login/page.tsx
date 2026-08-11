@@ -125,11 +125,11 @@ export default function LoginPage() {
                 email template includes {{ .Token }}; the Supabase default is
                 link-only. Kept visible (rather than hidden behind a flag) so
                 that adding the token to the template needs no code change. */}
-            <p className="text-xs text-ink/45">Or, if your email shows a 6-digit code, enter it here:</p>
+            <p className="text-xs text-ink/45">Or, if your email shows a numeric code, enter it here:</p>
             <input
               type="text"
               inputMode="numeric"
-              placeholder="123456"
+              placeholder="12345678"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               className="w-full rounded-lg border border-ink/15 px-3 py-2 bg-transparent tracking-widest"
