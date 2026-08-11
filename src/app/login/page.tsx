@@ -131,7 +131,12 @@ export default function LoginPage() {
               inputMode="numeric"
               placeholder="12345678"
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              // Strip anything that is not a digit, as the till already does.
+              // Email clients wrap and pad codes, so a pasted value routinely
+              // arrives as "1234 5678" or with a trailing space — and verifyOtp
+              // rejects that with a generic "invalid token" that reads like the
+              // code was wrong rather than merely dirty.
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               className="w-full rounded-lg border border-ink/15 px-3 py-2 bg-transparent tracking-widest"
             />
             <button
