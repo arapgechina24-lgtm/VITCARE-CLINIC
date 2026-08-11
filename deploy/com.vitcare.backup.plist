@@ -9,8 +9,19 @@
   failure is visible before opening.
 
   StartCalendarInterval, not StartInterval: launchd runs a missed calendar job
-  once the Mac wakes, so a machine switched off overnight still gets its
-  backup rather than silently skipping a day.
+  once the Mac WAKES, so a machine that slept overnight still gets its backup.
+
+  RunAtLoad is here because that only holds for sleep, not for shutdown. A
+  gui/ agent is not loaded at all while the Mac is off, so a 02:15 event on a
+  powered-down machine is not deferred — it is lost, silently, with nothing in
+  either log. That is not theoretical: on 2026-08-11 this job reported
+  `runs = 0` and `last exit code = (never exited)` while the newest snapshot
+  was 64 hours old. The schedule had never fired once. Only `npm run health`
+  noticed, because it checks backup AGE rather than whether the job is loaded.
+
+  RunAtLoad makes login the second trigger, so any day the Mac is used gets a
+  backup. The cost is one extra run per login — a few KB — and it doubles as
+  the Supabase keep-awake heartbeat described below.
 
   IT ALSO KEEPS THE PROJECTS AWAKE. Supabase free-tier projects pause after 7
   days without a request, and any API call resets that timer. This already bit
@@ -41,6 +52,11 @@
         <key>Minute</key>
         <integer>15</integer>
     </dict>
+
+    <!-- Second trigger: see the note at the top. Without this, a Mac that is
+         powered off at 02:15 silently skips the backup entirely. -->
+    <key>RunAtLoad</key>
+    <true/>
 
     <key>StandardOutPath</key>
     <string>/Users/arapg/Library/Logs/vitcare-backup.log</string>
