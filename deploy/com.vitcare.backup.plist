@@ -5,23 +5,22 @@
     cp deploy/com.vitcare.backup.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.vitcare.backup.plist
 
-  Runs at 02:15. Late enough that the pharmacy is closed, early enough that a
-  failure is visible before opening.
+  Runs every 30 minutes, and again at login.
 
-  StartCalendarInterval, not StartInterval: launchd runs a missed calendar job
-  once the Mac WAKES, so a machine that slept overnight still gets its backup.
+  It used to run once daily at 02:15. That was changed on 2026-08-12: the
+  pharmacy now trades against the cloud all day, so a single overnight
+  snapshot meant a failure at closing time destroyed a full day of sales,
+  stock movements and dispensed prescriptions. See the StartInterval note.
 
-  RunAtLoad is here because that only holds for sleep, not for shutdown. A
-  gui/ agent is not loaded at all while the Mac is off, so a 02:15 event on a
-  powered-down machine is not deferred — it is lost, silently, with nothing in
-  either log. That is not theoretical: on 2026-08-11 this job reported
-  `runs = 0` and `last exit code = (never exited)` while the newest snapshot
-  was 64 hours old. The schedule had never fired once. Only `npm run health`
-  noticed, because it checks backup AGE rather than whether the job is loaded.
-
-  RunAtLoad makes login the second trigger, so any day the Mac is used gets a
-  backup. The cost is one extra run per login — a few KB — and it doubles as
-  the Supabase keep-awake heartbeat described below.
+  The earlier design leaned on StartCalendarInterval because launchd runs a
+  missed calendar job once the Mac WAKES, so a machine that slept overnight
+  still got its backup. That holds for sleep but NOT for shutdown: a gui/
+  agent is not loaded at all while the Mac is off, so a 02:15 event on a
+  powered-down machine was not deferred — it was lost, silently, with nothing
+  in either log. On 2026-08-11 this job reported `runs = 0` and `last exit
+  code = (never exited)` while the newest snapshot was 64 hours old. The
+  schedule had never fired once. Only `npm run health` noticed, because it
+  checks backup AGE rather than whether the job is loaded — keep it that way.
 
   IT ALSO KEEPS THE PROJECTS AWAKE. Supabase free-tier projects pause after 7
   days without a request, and any API call resets that timer. This already bit
@@ -45,18 +44,43 @@
         <string>export PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH"; cd /Users/arapg/vitcare-clinic &amp;&amp; node scripts/backup.mjs &amp;&amp; node scripts/backup.mjs --verify</string>
     </array>
 
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>2</integer>
-        <key>Minute</key>
-        <integer>15</integer>
-    </dict>
+    <!-- Every 30 minutes, replacing the single 02:15 calendar run.
+         A once-a-day backup means a disk failure at 6pm costs a whole
+         trading day: every sale, every stock movement, every prescription
+         dispensed since 02:15. At 30 minutes the worst case is half an hour.
 
-    <!-- Second trigger: see the note at the top. Without this, a Mac that is
-         powered off at 02:15 silently skips the backup entirely. -->
+         The cost is nil. A full snapshot of BOTH projects gzips to ~136 KB,
+         so 48 runs a day is ~6.5 MB of egress and, at the retention below,
+         ~136 MB on disk. StartInterval also coalesces: a Mac asleep for six
+         hours runs this ONCE on wake, not twelve times.
+
+         StartCalendarInterval is gone — a 30-minute interval subsumes a
+         daily 02:15 event, and two triggers doing the same job is two things
+         to keep in step. -->
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <!-- Still needed. StartInterval only counts while the agent is LOADED,
+         and a gui/ agent is not loaded while the Mac is off — so a machine
+         shut down overnight resumes its interval at login rather than
+         catching up. RunAtLoad guarantees the first backup of the day
+         happens the moment someone signs in.
+
+         It also doubles as the Supabase keep-awake heartbeat: free-tier
+         projects pause after 7 days idle, which took the pharmacy down on
+         2026-08-01. -->
     <key>RunAtLoad</key>
     <true/>
+
+    <!-- ~21 days of half-hourly history. Retention is counted in SNAPSHOTS,
+         not days, so it has to move whenever the frequency does: leaving it
+         at the default 30 would have silently cut history from 30 days to
+         15 HOURS the moment the interval above changed. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VITCARE_BACKUP_KEEP</key>
+        <string>1000</string>
+    </dict>
 
     <key>StandardOutPath</key>
     <string>/Users/arapg/Library/Logs/vitcare-backup.log</string>

@@ -194,9 +194,21 @@ else {
   const latest = JSON.parse(readFileSync(join(BACKUPS, manifests.at(-1)), 'utf8'));
   const age = Date.now() - new Date(latest.finishedAt).getTime();
   const hrs = Math.round(age / 3600000);
+  // Thresholds track the SCHEDULE. com.vitcare.backup runs every 30 minutes
+  // (StartInterval 1800), so the old 36-hour limit would have let a stalled
+  // job go unreported for seventy-two consecutive misses.
+  //
+  // Not tightened all the way to 30 minutes, because the interval only counts
+  // while the agent is loaded: a Mac shut overnight legitimately shows a
+  // backup several hours old until RunAtLoad fires at login. 3h warns, 12h
+  // fails — a stall is caught within one trading day, and an overnight
+  // shutdown does not cry wolf every morning.
+  const mn = Math.round(age / 60000);
+  const old = hrs >= 1 ? `${hrs}h` : `${mn}m`;
   if (!latest.ok) fail('backups', 'the most recent backup reported errors');
-  else if (age > 36 * 3600000) fail('backups', `newest is ${hrs}h old — the daily job has stopped`);
-  else pass('backups', `${hrs}h old, ${manifests.length} kept`);
+  else if (age > 12 * 3600000) fail('backups', `newest is ${old} old — the half-hourly job has stopped`);
+  else if (age > 3 * 3600000) warn('backups', `newest is ${old} old — expected one every 30 min`);
+  else pass('backups', `${old} old, ${manifests.length} kept`);
 }
 
 /* ── security posture ─────────────────────────────────────────────────── */
