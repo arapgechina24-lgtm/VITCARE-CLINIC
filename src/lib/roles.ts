@@ -48,6 +48,10 @@ export const CAN = {
   prescribe: (role: string) => ['CLINICIAN', 'ADMIN'].includes(role),
   /** Take an allergy history. A clinical act; reception must not assert it. */
   recordAllergies: (role: string) => ['CLINICIAN', 'NURSE', 'ADMIN'].includes(role),
+  /** Book, reschedule, check in or cancel an appointment. Mirrors the role
+   *  guard shared by book_appointment / arrive_appointment /
+   *  set_appointment_status in 0018 — the desk roles, not the clinical ones. */
+  bookAppointment: (role: string) => ['RECEPTIONIST', 'NURSE', 'ADMIN'].includes(role),
   /** Read the audit log. */
   audit: (role: string) => ['ADMIN', 'AUDITOR'].includes(role),
 } as const;

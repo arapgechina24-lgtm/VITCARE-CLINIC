@@ -6,7 +6,15 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 import { DaySchedule } from '@/components/dashboard/DaySchedule';
-import { MOCK_DAY_SCHEDULE, MOCK_TRENDS } from '@/lib/mock';
+import {
+  buildLanes,
+  clinicDateKey,
+  clinicDayRange,
+  dayStats,
+  minutesInClinicDay,
+  type AppointmentRow,
+  type Clinician,
+} from '@/lib/appointments';
 
 type EncounterRow = {
   id: string;
@@ -93,6 +101,25 @@ export default async function OverviewPage() {
     .eq('site_id', staff.siteId)
     .in('status', ['PENDING', 'PRICED', 'PARTIAL', 'OUT_OF_STOCK']);
 
+  // Today's schedule, from the real appointments module. The window is a CLINIC
+  // day, not a server day — this renders on a UTC function, and `startOfToday`
+  // above is deliberately left alone because it buckets encounters by the same
+  // server clock that created them.
+  const todayKey = clinicDateKey();
+  const { from: dayFrom, to: dayTo } = clinicDayRange(todayKey);
+  const [{ data: apptData }, { data: clinData }] = await Promise.all([
+    supabase.rpc('list_appointments', {
+      p_site_id: staff.siteId,
+      p_from: dayFrom.toISOString(),
+      p_to: dayTo.toISOString(),
+    }),
+    supabase.rpc('list_site_clinicians', { p_site_id: staff.siteId }),
+  ]);
+  const appointments = (apptData ?? []) as AppointmentRow[];
+  const clinicians = (clinData ?? []) as Clinician[];
+  const apptStats = dayStats(appointments, clinicians.length);
+  const lanes = buildLanes(appointments, clinicians);
+
   const firstName = staff.fullName.split(' ')[0];
   const today = new Date().toLocaleDateString('en-KE', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -140,11 +167,13 @@ export default async function OverviewPage() {
         />
         <StatTile
           label="Appointments today"
-          value={20}
+          value={apptStats.total}
           icon={CalendarDays}
-          trend={MOCK_TRENDS.appointments}
-          sample
-          footnote="Appointments module not built"
+          footnote={
+            apptStats.total === 0
+              ? 'Nothing booked today'
+              : `${apptStats.arrived} arrived · ${apptStats.noShow} did not attend`
+          }
         />
       </div>
 
@@ -247,13 +276,16 @@ export default async function OverviewPage() {
           title="Today's clinicians"
           subtitle="Consulting-room schedule"
           action={
-            <span className="rounded-md bg-warning-wash px-2 py-1 text-2xs font-medium text-warning-ink">
-              Sample data — appointments module not built
-            </span>
+            <Link
+              href="/dashboard/appointments"
+              className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-xs text-ink-secondary transition-colors hover:bg-surface-hover"
+            >
+              Open appointments
+            </Link>
           }
         />
         <CardBody className="pt-0">
-          <DaySchedule clinicians={MOCK_DAY_SCHEDULE} />
+          <DaySchedule lanes={lanes} nowMin={minutesInClinicDay(now)} />
         </CardBody>
       </Card>
     </div>

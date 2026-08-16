@@ -48,7 +48,10 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
         built: true,
         roles: ['RECEPTIONIST', 'NURSE', 'ADMIN'],
       },
-      { href: '/dashboard/appointments', label: 'Appointments', icon: CalendarDays, built: false },
+      // Open to every role: a clinician needs to see their own day even though
+      // only the desk roles can change it. What the page lets you DO is decided
+      // by CAN.bookAppointment and re-checked by the RPCs.
+      { href: '/dashboard/appointments', label: 'Appointments', icon: CalendarDays, built: true },
     ],
   },
   {
