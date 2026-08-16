@@ -1,0 +1,52 @@
+# Netlify deployment config.
+#
+# WHY THIS EXISTS: Vercel is the path README/.vercelignore were written for, but
+# Vercel's free Hobby tier is a personal-account scope — a suspended team
+# subscription blocks project creation outright (402 resource_creation_blocked).
+# Netlify's free tier hosts the same Next.js server output, so this file makes
+# the repo deployable there without touching application code.
+#
+# ── THE ONE THING THAT WILL BREAK A DEPLOY ───────────────────────────────────
+# NEXT_PUBLIC_SUPABASE_URL is read at BUILD time, not just at runtime:
+# next.config.mjs uses it to pin the CSP connect-src to this exact Supabase
+# host. Build without it and the shipped policy is `connect-src 'self'`, which
+# blocks every request to Supabase — the app loads, renders a login page, and
+# silently cannot authenticate anyone. That failure looks like a bug in the
+# app, not a missing variable, so set the environment variables in
+# Site configuration → Environment variables BEFORE the first build:
+#
+#   NEXT_PUBLIC_SUPABASE_URL       https://<project>.supabase.co
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY  sb_publishable_…  (NOT the legacy anon JWT —
+#                                  it is disabled on this project)
+#   SUPABASE_SERVICE_ROLE_KEY      sb_secret_…       (server only; both
+#                                  integration routes 503 without it)
+#
+# Changing NEXT_PUBLIC_* later requires a REBUILD, not a restart — the values
+# are inlined into the browser bundle.
+#
+# ── DEPLOYMENT PROTECTION ────────────────────────────────────────────────────
+# This app serves patient records. Netlify's free tier has no team-SSO gate, so
+# the deployed URL is public and Supabase RLS plus the middleware auth gate are
+# the only barrier. Set a site-level password under Site configuration →
+# Access control before pointing anyone at the URL, and keep
+# supabase/migrations/0007_admin_can_prescribe_TEMPORARY.sql in mind: it is
+# still applied.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Matches .github/workflows/ci.yml, so a build that passes CI builds here.
+  NODE_VERSION = "24"
+
+# Netlify auto-detects Next.js and installs this plugin; declaring it keeps the
+# adapter explicit rather than leaving it to detection, and makes it obvious in
+# review that middleware and the ƒ-dynamic routes need a server runtime — this
+# app cannot be published as a static export.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Security headers are set in next.config.mjs (CSP, HSTS, X-Frame-Options and
+# the rest) and the Next.js runtime serves them, so they are deliberately NOT
+# duplicated here. Two sources for one policy is how they drift.
