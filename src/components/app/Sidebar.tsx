@@ -57,8 +57,26 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
   {
     heading: 'Operations',
     items: [
-      { href: '/dashboard/pharmacy', label: 'Pharmacy', icon: Pill, built: false },
-      { href: '/dashboard/billing', label: 'Billing', icon: Receipt, built: false, roles: ['ADMIN'] },
+      // Open to the clinical roles as well as the desk: a clinician's most
+      // common question about a prescription is "did my patient get it?", and
+      // this is the only screen that answers it. Dispensing itself stays in
+      // VITCARE-POS — nothing here can mark a medicine handed over.
+      {
+        href: '/dashboard/pharmacy',
+        label: 'Pharmacy',
+        icon: Pill,
+        built: true,
+        roles: ['CLINICIAN', 'NURSE', 'PHARMACIST', 'RECEPTIONIST', 'ADMIN', 'AUDITOR'],
+      },
+      // Widened from ADMIN-only: reception is who actually takes the money.
+      // Voiding stays administrative (CAN.voidInvoice).
+      {
+        href: '/dashboard/billing',
+        label: 'Billing',
+        icon: Receipt,
+        built: true,
+        roles: ['RECEPTIONIST', 'ADMIN', 'AUDITOR'],
+      },
     ],
   },
   {

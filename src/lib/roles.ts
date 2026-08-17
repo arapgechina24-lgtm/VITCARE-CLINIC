@@ -52,6 +52,20 @@ export const CAN = {
    *  guard shared by book_appointment / arrive_appointment /
    *  set_appointment_status in 0018 — the desk roles, not the clinical ones. */
   bookAppointment: (role: string) => ['RECEPTIONIST', 'NURSE', 'ADMIN'].includes(role),
+  /** Raise, issue and take payment on a clinic invoice. Mirrors the guard
+   *  shared by open_invoice_for_encounter / add_invoice_item / issue_invoice /
+   *  record_payment in 0021 — the cashier roles. */
+  bill: (role: string) => ['RECEPTIONIST', 'ADMIN'].includes(role),
+  /** Void an issued invoice. Deliberately narrower than `bill`: writing off a
+   *  document that has left the desk is an administrative act. */
+  voidInvoice: (role: string) => role === 'ADMIN',
+  /** Withdraw a prescription already sent to the pharmacy. Mirrors
+   *  cancel_prescription, which gates on can_prescribe() — un-prescribing is
+   *  as clinical an act as prescribing. */
+  cancelPrescription: (role: string) => ['CLINICIAN', 'ADMIN'].includes(role),
+  /** See the CLINIC ↔ POS delivery diagnostics. Error text can carry the POS
+   *  base URL and upstream bodies, so it stops at the operators. */
+  pharmacyLinkHealth: (role: string) => ['ADMIN', 'AUDITOR'].includes(role),
   /** Read the audit log. */
   audit: (role: string) => ['ADMIN', 'AUDITOR'].includes(role),
 } as const;
