@@ -93,3 +93,57 @@ describe('the secretless Vercel deployment still boots', () => {
     );
   });
 });
+
+describe('pull mode: POS_SIGNING_SECRET is complete on its own', () => {
+  // REGRESSION. On 2026-08-17 the publicly hosted clinic was given
+  // POS_SIGNING_SECRET alone — precisely what the pull endpoints need, since
+  // the till calls us and there is nothing to dial out to. The old
+  // all-or-nothing rule counted that as 1-of-3 and threw at boot, so every
+  // route answered 502 for ~24 minutes. The only ways to satisfy the old rule
+  // were to remove the secret (disabling pull) or to invent a POS_BASE_URL
+  // pointing at a till the cloud host cannot reach.
+  test('the signing secret alone is a valid configuration', () => {
+    assert.deepEqual(problemsFor({ ...MINIMAL, POS_SIGNING_SECRET: 'a'.repeat(32) }), []);
+  });
+
+  test('a weak signing secret is still rejected in pull mode', () => {
+    // Relaxing the pairing must not relax the strength check — this secret
+    // authenticates every inbound call from the till.
+    assert.ok(mentions(problemsFor({ ...MINIMAL, POS_SIGNING_SECRET: 'short' }), 'POS_SIGNING_SECRET'));
+  });
+});
+
+describe('push mode is still all-or-nothing', () => {
+  test('the full trio remains valid', () => {
+    assert.deepEqual(problemsFor({ ...MINIMAL, ...POS_FULL }), []);
+  });
+
+  test('a base URL without the drain secret is rejected', () => {
+    const problems = problemsFor({
+      ...MINIMAL,
+      POS_BASE_URL: POS_FULL.POS_BASE_URL,
+      POS_SIGNING_SECRET: POS_FULL.POS_SIGNING_SECRET,
+    });
+    assert.ok(mentions(problems, 'OUTBOX_DRAIN_SECRET'));
+  });
+
+  test('a drain secret without the base URL is rejected', () => {
+    const problems = problemsFor({
+      ...MINIMAL,
+      OUTBOX_DRAIN_SECRET: POS_FULL.OUTBOX_DRAIN_SECRET,
+      POS_SIGNING_SECRET: POS_FULL.POS_SIGNING_SECRET,
+    });
+    assert.ok(mentions(problems, 'POS_BASE_URL'));
+  });
+
+  test('push keys without a signing secret name the missing secret', () => {
+    // The push path cannot sign anything without it, so this stays an error —
+    // it is only unpaired in the pull direction.
+    const problems = problemsFor({
+      ...MINIMAL,
+      POS_BASE_URL: POS_FULL.POS_BASE_URL,
+      OUTBOX_DRAIN_SECRET: POS_FULL.OUTBOX_DRAIN_SECRET,
+    });
+    assert.ok(problems.some((p) => p.includes('POS_SIGNING_SECRET')));
+  });
+});

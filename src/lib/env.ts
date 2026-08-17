@@ -14,9 +14,14 @@ import { z } from 'zod';
  * machine work. Demanding POS_SIGNING_SECRET at boot would refuse to start
  * the cloud copy, which is a supported deployment.
  *
- * What IS enforced is that the POS integration is all-or-nothing. Half of it
- * is the dangerous state: the clinic would queue prescriptions it can sign
- * but never deliver, or deliver them and never learn what happened.
+ * What IS enforced is that the POS PUSH path is all-or-nothing. Half of it is
+ * the dangerous state: the clinic would queue prescriptions it can sign but
+ * never deliver, or deliver them and never learn what happened.
+ *
+ * The PULL path is a separate, smaller configuration: POS_SIGNING_SECRET on
+ * its own is complete and valid, because the till calls us and there is
+ * nothing to dial out to. See crossFieldProblems for what that cost when the
+ * two were conflated.
  *
  * External connections are deliberately not checked here — see the same note
  * in the POS copy. `npm run health` owns reachability.
@@ -61,14 +66,32 @@ export function crossFieldProblems(env: RawEnv): string[] {
   const set = (v?: string) => typeof v === 'string' && v.trim().length > 0;
   const fail = (path: string, message: string) => out.push(`${path}: ${message}`);
 
-  // All-or-nothing. Half-configured means prescriptions that are signed and
-  // never delivered, or delivered and never reconciled.
-  const keys = ['POS_BASE_URL', 'POS_SIGNING_SECRET', 'OUTBOX_DRAIN_SECRET'] as const;
-  const present = keys.filter((k) => set(env[k]));
-  if (present.length > 0 && present.length < keys.length) {
-    const missing = keys.filter((k) => !set(env[k]));
+  // The all-or-nothing rule belongs to the PUSH path only.
+  //
+  // PUSH (clinic → till) genuinely needs all three: somewhere to send
+  // (POS_BASE_URL), a secret to sign with (POS_SIGNING_SECRET), and the gate on
+  // the drain that triggers sending (OUTBOX_DRAIN_SECRET). Half of that is the
+  // dangerous state this rule was written for — prescriptions signed and never
+  // delivered, or delivered and never reconciled.
+  //
+  // PULL (till → clinic, /api/integration/pos/outbox/fetch + /ack) needs
+  // POS_SIGNING_SECRET AND NOTHING ELSE. The till comes to us, so there is no
+  // base URL to call and no local drain to gate. The original rule predates
+  // pull mode and treated that valid configuration as half-configured.
+  //
+  // This is not hypothetical: on 2026-08-17 the publicly hosted clinic had
+  // POS_SIGNING_SECRET set on its own — exactly what pull mode requires — and
+  // the old rule threw at boot, taking every route down with a 502 for ~24
+  // minutes. The alternative was inventing a POS_BASE_URL pointing at a till
+  // the cloud host cannot reach, which would satisfy the schema by lying to it.
+  const pushOnly = ['POS_BASE_URL', 'OUTBOX_DRAIN_SECRET'] as const;
+  const pushPresent = pushOnly.filter((k) => set(env[k]));
+  if (pushPresent.length > 0) {
+    // Any push key commits you to the whole push path, signing secret included.
+    const missing: string[] = pushOnly.filter((k) => !set(env[k]));
+    if (!set(env.POS_SIGNING_SECRET)) missing.push('POS_SIGNING_SECRET');
     for (const k of missing) {
-      fail(k, `POS integration is half-configured (${present.length}/${keys.length}); missing ${missing.join(', ')}`);
+      fail(k, `POS push path is half-configured; missing ${missing.join(', ')}`);
     }
   }
 
