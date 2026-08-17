@@ -109,3 +109,78 @@ Payer is already modelled (`CASH | SHA | INSURER`) end to end. Before
 building SHA claim submission, treat the current Social Health Authority
 claim format/endpoints as a research task, not an assumption — the spec has
 shifted since the NHIF transition.
+
+---
+
+## Pull mode (POS fetches from CLINIC)
+
+Added when the clinic moved to public hosting. **The push path still exists and
+is unchanged** — use it when both apps are on the same LAN. Use pull when they
+are not.
+
+### Why
+
+The till publishes exactly one path to the internet (`/api/mpesa/callback`);
+`deploy/cloudflare/check-ingress.sh` in the POS repo actively asserts that
+`/api/prescriptions` is *unreachable* from outside the building. A publicly
+hosted clinic therefore cannot push to it — not through misconfiguration, but
+because the till deliberately has no inbound public door, on a machine that
+takes money and issues KRA invoices.
+
+So the flow inverts. The till already reaches **out** to the internet to
+deliver status webhooks; now it also reaches out to collect work. The till's
+inbound surface stays at zero.
+
+```
+CLINIC (public)                          TILL (LAN, no inbound)
+     │                                          │
+     │  ◀── POST /outbox/fetch  (HMAC) ─────────┤   every ~30s
+     ├──── { prescriptions: [...] } ───────────▶│
+     │                                          │  persist, dedupe on prescriptionId
+     │  ◀── POST /outbox/ack    (HMAC) ─────────┤
+     │      { outboxIds: [...] }                │
+     │                                          │
+     │  ◀── POST /integration/pos/prescription-status (unchanged)
+```
+
+### Endpoints
+
+| Route | Body | Returns |
+|---|---|---|
+| `POST /api/integration/pos/outbox/fetch` | `{"limit":25}` (1–100, optional) | `{"prescriptions":[{"outboxId","prescriptionId","payload"}],"count":n}` |
+| `POST /api/integration/pos/outbox/ack` | `{"outboxIds":["uuid",…]}` (1–100) | `{"ok":true,"acked":n}` |
+
+`payload` is the same `CreatePrescription` body the push path sends, so POS
+parses it with the schema it already has.
+
+### Delivery semantics — read this before writing the poller
+
+**At-least-once, with an idempotent consumer.** Fetching does *not* mark
+anything delivered; only `ack` does. If the till crashes between the two, the
+clinic serves the same prescription again and **the till must discard the
+duplicate** — dedupe on `prescriptionId`, exactly as the push contract's
+`Idempotency-Key` required.
+
+Marking delivered on fetch was rejected: any crash after the response leaves
+the clinic would silently lose a prescription, which is the precise failure the
+outbox exists to prevent.
+
+A row fetched and never acked stays queued and is re-served. That is visible,
+not silent — `pharmacy_link_health()` reports `oldest_undelivered_at` and the
+clinic's pharmacy board shows the row as still queued.
+
+### Auth
+
+Identical to the webhook, via `integration/signature.ts`: HMAC-SHA256 over
+`` `${X-Timestamp}.${rawBody}` `` in hex, verified against the **raw** body
+before parsing, inside a five-minute replay window. Both endpoints are POST
+including the read — a GET has no body to sign, and a second signing scheme for
+one verb is how the weaker one becomes the way in.
+
+Both use `POS_SIGNING_SECRET`, the same shared secret as the push path. Nothing
+new to configure beyond what `.env.example` already lists; `POS_BASE_URL` is
+needed only by the push drain.
+
+A forged **ack** is the dangerous direction — it would retire a prescription
+that never reached the pharmacy. `pull-handler.test.ts` asserts that every
+rejected request returns before touching the store.
