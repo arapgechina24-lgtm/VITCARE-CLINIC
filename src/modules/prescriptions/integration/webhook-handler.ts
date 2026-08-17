@@ -11,7 +11,7 @@
  * src/app/api/integration/pos/prescription-status/route.ts.
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { rejectIfUnauthentic } from './signature';
 import {
   PrescriptionStatusEventSchema,
   type PrescriptionStatusEvent,
@@ -33,38 +33,16 @@ export interface WebhookDeps {
   audit(action: string, prescriptionId: string): Promise<void>;
 }
 
-const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000; // 5 minutes
-
-/** Constant-time signature check. Returns false on any mismatch. */
-function verifySignature(secret: string, timestamp: string, rawBody: string, provided: string): boolean {
-  const expected = createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
-  const a = Buffer.from(expected, 'utf8');
-  const b = Buffer.from(provided, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 /**
  * POST /api/integration/pos/prescription-status
  * @param request the inbound webhook request from POS
  */
 export async function handlePosWebhook(request: Request, deps: WebhookDeps): Promise<Response> {
   const rawBody = await request.text(); // raw string — required for HMAC
-  const timestamp = request.headers.get('X-Timestamp');
-  const signature = request.headers.get('X-Signature');
-
-  if (!timestamp || !signature) {
-    return Response.json({ error: 'missing signature headers' }, { status: 401 });
-  }
-
-  // Replay protection.
-  const skew = Math.abs(Date.now() - Date.parse(timestamp));
-  if (Number.isNaN(skew) || skew > MAX_CLOCK_SKEW_MS) {
-    return Response.json({ error: 'stale timestamp' }, { status: 401 });
-  }
-
-  if (!verifySignature(deps.signingSecret, timestamp, rawBody, signature)) {
-    return Response.json({ error: 'bad signature' }, { status: 401 });
-  }
+  // Headers, replay window and signature — see integration/signature.ts. Returns
+  // early WITHOUT touching deps, which the suite asserts explicitly.
+  const rejected = rejectIfUnauthentic(request, rawBody, deps.signingSecret);
+  if (rejected) return rejected;
 
   // Parse + validate only AFTER the signature check.
   let event: PrescriptionStatusEvent;
