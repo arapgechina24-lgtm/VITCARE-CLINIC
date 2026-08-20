@@ -103,9 +103,13 @@ describe('least privilege holds', () => {
     assert.equal(scopeFor('CLINICIAN'), 'FULL');
   });
 
-  test('an admin has the whole system', () => {
+  test('an admin has the whole system, but prescribes only on a licence', () => {
     assert.equal(CAN.readClinical('ADMIN'), true);
-    assert.equal(CAN.prescribe('ADMIN'), true);
+    // 0022: the blanket "any ADMIN may prescribe" concession from 0007 is gone.
+    assert.equal(CAN.prescribe('ADMIN'), false);
+    assert.equal(CAN.prescribe('ADMIN', 'KMPDC-12345'), true);
+    assert.equal(CAN.prescribe('ADMIN', '   '), false, 'whitespace is not a licence');
+    assert.equal(CAN.prescribe('ADMIN', null), false);
     assert.equal(CAN.audit('ADMIN'), true);
     assert.equal(scopeFor('ADMIN'), 'FULL');
   });
@@ -132,9 +136,20 @@ describe('least privilege holds', () => {
     assert.equal(scopeFor('SOMETHING_NEW'), 'IDENTITY');
   });
 
-  test('nobody but a clinician or admin prescribes', () => {
-    const allowed = ROLES.filter(CAN.prescribe);
-    assert.deepEqual(allowed.sort(), ['ADMIN', 'CLINICIAN']);
+  test('role alone gets you prescribing rights only as a CLINICIAN', () => {
+    // Wrapped rather than passed bare: filter supplies the INDEX as the second
+    // argument, and tsc rejects a number where a licence is expected. That
+    // compile error is the real guard; the typeof check in CAN.prescribe is the
+    // belt to its braces for callers that are not type-checked.
+    const allowed = ROLES.filter((r) => CAN.prescribe(r));
+    assert.deepEqual(allowed.sort(), ['CLINICIAN']);
+  });
+
+  test('a licence does not promote a non-prescribing role', () => {
+    // The licence is a condition on ADMIN, not a bypass for everyone else.
+    for (const role of ['RECEPTIONIST', 'NURSE', 'PHARMACIST', 'AUDITOR', 'LAB_TECH']) {
+      assert.equal(CAN.prescribe(role, 'KMPDC-12345'), false, `${role} must not prescribe`);
+    }
   });
 });
 

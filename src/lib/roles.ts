@@ -44,8 +44,20 @@ export const CAN = {
   triage: (role: string) => ['NURSE', 'CLINICIAN', 'ADMIN'].includes(role),
   /** Write consultation notes. */
   consult: (role: string) => ['CLINICIAN', 'ADMIN'].includes(role),
-  /** Issue a prescription. Mirrors can_prescribe() — see 0007. */
-  prescribe: (role: string) => ['CLINICIAN', 'ADMIN'].includes(role),
+  /**
+   * Issue a prescription. Mirrors can_prescribe() — see 0022, which replaced
+   * 0007's blanket "any ADMIN" concession.
+   *
+   * An ADMIN prescribes only while holding a practitioner licence, so the
+   * licence has to be passed in; without it the honest answer is no. The
+   * The `typeof` guard rather than a truthiness check is deliberate: passed
+   * bare to Array.filter this would receive the INDEX as its second argument,
+   * and `(0).trim()` throws. tsc rejects that call outright, so the guard is
+   * only the fallback for callers it cannot see.
+   */
+  prescribe: (role: string, licenseNo?: string | null) =>
+    role === 'CLINICIAN'
+    || (role === 'ADMIN' && typeof licenseNo === 'string' && licenseNo.trim() !== ''),
   /** Take an allergy history. A clinical act; reception must not assert it. */
   recordAllergies: (role: string) => ['CLINICIAN', 'NURSE', 'ADMIN'].includes(role),
   /** Book, reschedule, check in or cancel an appointment. Mirrors the role
