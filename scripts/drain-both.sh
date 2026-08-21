@@ -38,3 +38,26 @@ if [ -n "$STATUS_SECRET" ]; then
 else
   echo "$(stamp) till->clinic  SKIPPED: STATUS_DRAIN_SECRET not set"
 fi
+
+# clinic -> till, PULL : collect anything the push above could not deliver.
+#
+# Not a replacement for the push. The push is better when it works — it fires
+# on the clinician's action instead of on a timer, and it needs no internet at
+# all. But it only works while a clinic process is running HERE, on port 3001,
+# and a prescription written on the public clinic while this machine is asleep
+# has nothing to push it. Until this ran, the whole loop quietly depended on a
+# local dev server that is not part of the deployed design.
+#
+# Safe to run beside the push: the clinic retires an outbox row only when we
+# ack it, and storePrescription is keyed on prescriptionId, so a row that
+# arrives both ways is stored once and acked once.
+#
+# 503 is the not-configured answer (no CLINIC_API_BASE_URL) and is normal on a
+# LAN deployment, so it is reported plainly rather than as a failure.
+if [ -n "$STATUS_SECRET" ]; then
+  out=$(curl -sS --max-time 25 -X POST http://localhost:3000/api/prescriptions/pull \
+        -H "Authorization: Bearer $STATUS_SECRET" 2>&1)
+  echo "$(stamp) clinic->till(pull)  $out"
+else
+  echo "$(stamp) clinic->till(pull)  SKIPPED: STATUS_DRAIN_SECRET not set"
+fi
