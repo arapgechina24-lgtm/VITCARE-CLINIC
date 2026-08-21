@@ -9,8 +9,9 @@
  * presentational facts — outstanding, whether an action is available — from it.
  */
 
+import type { Payer, PriceBasis } from './catalogue';
+
 export type InvoiceStatus = 'DRAFT' | 'ISSUED' | 'PART_PAID' | 'PAID' | 'VOID';
-export type Payer = 'CASH' | 'SHA' | 'INSURER';
 export type PaymentMethod = 'CASH' | 'MPESA' | 'INSURER' | 'WAIVER';
 
 export interface InvoiceSummary {
@@ -28,21 +29,18 @@ export interface InvoiceSummary {
   created_at: string;
 }
 
-export interface ServiceRow {
-  id: string;
-  code: string;
-  name: string;
-  category: string | null;
-  price_cents: number;
-  vat_rate: number;
-}
-
 export interface InvoiceItemRow {
   id: string;
   description: string;
+  /** Snapshotted with the price: "Dental extraction x3" is ambiguous in a way
+   *  "x3 teeth" is not, and the catalogue can be re-worded later. */
+  unit: string | null;
   quantity: number;
   unit_price_cents: number;
   vat_rate: number;
+  /** Which column the price came from, so a zero can be explained rather than
+   *  merely displayed. See 0023's note on the column. */
+  price_basis: PriceBasis;
 }
 
 export interface PaymentRow {
@@ -97,6 +95,8 @@ export const canTakePayment = (i: Pick<InvoiceSummary, 'status' | 'total_cents' 
 /** Mirrors void_invoice: ADMIN-only is enforced separately; nothing paid. */
 export const canVoid = (i: Pick<InvoiceSummary, 'status' | 'paid_cents'>) =>
   i.status !== 'VOID' && i.paid_cents === 0;
+
+export type { Payer };
 
 export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
   DRAFT: 'Draft',

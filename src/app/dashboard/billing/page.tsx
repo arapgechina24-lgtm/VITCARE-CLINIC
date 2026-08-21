@@ -5,7 +5,8 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { CAN } from '@/lib/roles';
-import { formatKes, type InvoiceSummary, type ServiceRow } from '@/lib/billing';
+import { formatKes, type InvoiceSummary } from '@/lib/billing';
+import { isConditional, type CatalogueService } from '@/lib/catalogue';
 import { BillingBoard } from './BillingBoard';
 
 interface DaySummary {
@@ -43,11 +44,26 @@ export default async function BillingPage() {
   const [{ data: invData, error }, { data: sumData }, { data: svcData }] = await Promise.all([
     supabase.rpc('list_invoices', { p_site_id: staff.siteId, p_status: null, p_limit: 100 }),
     supabase.rpc('billing_day_summary', { p_site_id: staff.siteId, p_day: null }),
-    supabase.rpc('list_service_catalog', { p_site_id: staff.siteId }),
+    // Fetched once at the cash rate, but carrying BOTH price columns and the
+    // SHA status, so the board can re-price the picker for whichever payer an
+    // invoice has without another round trip. See src/lib/catalogue.ts.
+    //
+    // Inactive services are included DELIBERATELY. The desk needs to find out
+    // that an X-ray exists but is switched off — "Not available here, the
+    // Radiology module is not active" is an answer it can give the patient,
+    // where an empty search result is not. They come back greyed out, with the
+    // add button disabled and the reason on the line.
+    supabase.rpc('list_service_catalog', {
+      p_site_id: staff.siteId, p_payer: 'CASH', p_include_inactive: true,
+    }),
   ]);
 
   const invoices = (invData ?? []) as InvoiceSummary[];
-  const services = (svcData ?? []) as ServiceRow[];
+  const services = (svcData ?? []) as CatalogueService[];
+  const chargeableNow = services.filter((s) => s.chargeable).length;
+  const pendingModules = new Set(
+    services.filter((s) => isConditional(s.module)).map((s) => s.module),
+  );
   const summary = (Array.isArray(sumData) ? sumData[0] : sumData) as DaySummary | null;
 
   const collected = summary?.collected_cents ?? 0;
@@ -92,24 +108,53 @@ export default async function BillingPage() {
           footnote={`${summary?.unpaid_count ?? 0} invoice${(summary?.unpaid_count ?? 0) === 1 ? '' : 's'} still owing`}
         />
         <StatTile
-          label="Priced services"
-          value={services.length}
+          label="Chargeable services"
+          value={chargeableNow}
           icon={Receipt}
           footnote={
             services.length === 0
               ? 'No catalogue yet — an admin adds services'
-              : 'Available to charge'
+              : chargeableNow === services.length
+                ? `${services.length} in the catalogue`
+                : `of ${services.length} in the catalogue`
           }
         />
       </div>
 
-      {services.length === 0 && (
+      {services.length === 0 ? (
         <Card>
           <CardBody className="pt-5">
             <p className="text-sm text-ink-secondary">
               There are no priced services for this site yet, so nothing can be charged. An
               administrator adds them to the service catalogue — a code, a name, a price in
               shillings and whether the item is VAT-standard or exempt.
+            </p>
+          </CardBody>
+        </Card>
+      ) : chargeableNow === 0 ? (
+        <Card>
+          <CardBody className="pt-5">
+            <p className="text-sm text-ink-secondary">
+              The catalogue is loaded but nothing can be charged from it yet — every price
+              takes effect on a date that has not arrived. This is deliberate: catalogue v1.0
+              is dated 01 September 2026 and marked draft pending board approval, and billing
+              an unapproved price is worse than not billing at all. An administrator brings
+              the date forward once the board has ratified it.
+            </p>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {pendingModules.size > 0 && (
+        <Card>
+          <CardBody className="pt-5">
+            <p className="text-sm text-ink-secondary">
+              {pendingModules.size} service module
+              {pendingModules.size === 1 ? ' is' : 's are'} loaded but switched off, so
+              nothing in {pendingModules.size === 1 ? 'it' : 'them'} can be billed:{' '}
+              {[...pendingModules].map((m) => m.replace('Conditional - ', '')).sort().join(', ')}.
+              Each needs its licence, equipment and registered staff in place before an
+              administrator activates it.
             </p>
           </CardBody>
         </Card>
