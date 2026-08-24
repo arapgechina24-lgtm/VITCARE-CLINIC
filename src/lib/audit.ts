@@ -118,8 +118,10 @@ export function auditContext(e: Pick<AuditEntry, 'details'>): string {
   if (search) bits.push(`“${search}”`);
   const subject = str('subject');
   if (subject) bits.push(subject);
-  const module = str('module');
-  if (module) bits.push(module.replace('Conditional - ', ''));
+  // Not `module`: Next.js reserves that identifier (it is CommonJS's), and
+  // @next/next/no-assign-module-variable rejects binding it even in an ES module.
+  const moduleName = str('module');
+  if (moduleName) bits.push(moduleName.replace('Conditional - ', ''));
   if (typeof d.active === 'boolean') bits.push(d.active ? 'switched on' : 'switched off');
   if (typeof d.has_licence === 'boolean') bits.push(d.has_licence ? 'licence recorded' : 'licence cleared');
   const from = str('from');
