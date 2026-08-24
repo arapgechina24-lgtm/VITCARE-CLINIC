@@ -64,6 +64,14 @@ export const CAN = {
    *  guard shared by book_appointment / arrive_appointment /
    *  set_appointment_status in 0018 — the desk roles, not the clinical ones. */
   bookAppointment: (role: string) => ['RECEPTIONIST', 'NURSE', 'ADMIN'].includes(role),
+  /** Record that a service was performed at this visit. Mirrors
+   *  record_encounter_service in 0026 — the clinical roles, including NURSE,
+   *  because dressings, injections and observations are nursing work and
+   *  restricting capture to prescribers would push the treatment room back
+   *  onto paper. Deliberately NOT the same set as `bill`: stating that a
+   *  procedure happened and putting a priced line on a financial document are
+   *  different acts by different people. */
+  recordService: (role: string) => ['CLINICIAN', 'NURSE', 'ADMIN'].includes(role),
   /** Raise, issue and take payment on a clinic invoice. Mirrors the guard
    *  shared by open_invoice_for_encounter / add_invoice_item / issue_invoice /
    *  record_payment in 0021 — the cashier roles. */

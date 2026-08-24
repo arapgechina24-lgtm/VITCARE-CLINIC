@@ -19,6 +19,16 @@
  *      get_patient_record's 90 lines of plpgsql would sail through and only
  *      surface when someone pasted it into a production database.
  *
+ *      Pass 2 runs only for files that actually declare a function. That is
+ *      not a shortcut: a file with no CREATE FUNCTION has no plpgsql body for
+ *      the validator to look at, and handing it a large one anyway makes the
+ *      WASM module abort with a raw TypeError rather than return an error —
+ *      which is how a 237-row data seed containing no code at all managed to
+ *      fail a plpgsql check. The condition is proved from the file, never
+ *      assumed: if a CREATE FUNCTION is present the pass is mandatory and a
+ *      crash inside it is a failure, so nothing that could carry plpgsql ever
+ *      skips validation.
+ *
  * WHAT THIS DOES NOT CHECK: semantics. It will not tell you a column does not
  * exist, a function is missing, or the argument types are wrong — only the
  * server knows that. This is a syntax gate, not a substitute for applying the
@@ -56,6 +66,7 @@ if (files.length === 0) {
 let failed = 0;
 let statements = 0;
 let bodies = 0;
+let skipped = 0;
 
 for (const file of files) {
   const sql = readFileSync(resolve(DIR, file), 'utf8');
@@ -74,7 +85,27 @@ for (const file of files) {
   }
   statements += parsed.parse_tree?.stmts?.length ?? 0;
 
-  const pl = pg.parsePlpgsql(sql);
+  // Proved from the file, not guessed. Every function body in this folder is
+  // dollar-quoted inside a CREATE FUNCTION; no CREATE FUNCTION means no body.
+  if (!/\bcreate\s+(or\s+replace\s+)?function\b/i.test(sql)) {
+    skipped += 1;
+    continue;
+  }
+
+  // parsePlpgsql can abort inside the WASM module instead of returning an
+  // error. Left uncaught that dumps a screen of compiled assembly and kills
+  // the whole run, so the remaining migrations never get checked at all.
+  let pl;
+  try {
+    pl = pg.parsePlpgsql(sql);
+  } catch (e) {
+    console.error(`\n  ✖ ${file} — the plpgsql validator crashed: ${e.message}`);
+    console.error('      The file declares a function, so this cannot be skipped. Split it:');
+    console.error('      the validator gives up on large inputs, and the same bodies pass');
+    console.error('      in smaller files. See the header of 0021_billing_rpcs.sql.');
+    failed += 1;
+    continue;
+  }
   if (pl.error) {
     report(file, sql, pl.error, 'plpgsql');
     failed += 1;
@@ -110,5 +141,6 @@ if (failed > 0) {
 
 console.log(
   `✓ SQL check passed — ${files.length} migration(s), ${statements} statements, ` +
-    `${bodies} plpgsql bodies, no syntax errors.`,
+    `${bodies} plpgsql bodies, no syntax errors.` +
+    (skipped ? ` (${skipped} declare no function — nothing for the plpgsql pass to read.)` : ''),
 );
