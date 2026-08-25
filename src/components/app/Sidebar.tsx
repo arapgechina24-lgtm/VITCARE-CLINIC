@@ -85,8 +85,8 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
     // is included on the audit log because reviewing it is the entire reason
     // that role exists.
     items: [
-      { href: '/dashboard/audit', label: 'Audit log', icon: ScrollText, built: false, roles: ['ADMIN', 'AUDITOR'] },
-      { href: '/dashboard/settings', label: 'Settings', icon: Settings, built: false, roles: ['ADMIN'] },
+      { href: '/dashboard/audit', label: 'Audit log', icon: ScrollText, built: true, roles: ['ADMIN', 'AUDITOR'] },
+      { href: '/dashboard/settings', label: 'Settings', icon: Settings, built: true, roles: ['ADMIN'] },
     ],
   },
 ];
