@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Activity, CalendarDays, LayoutDashboard, Pill, Receipt, ScrollText, Settings, Users, UserPlus, X,
+  Activity, Building2, CalendarDays, LayoutDashboard, Pill, Receipt, ScrollText,
+  Settings, Users, UserPlus, X,
 } from 'lucide-react';
 
 /**
@@ -74,6 +75,16 @@ export const NAV_SECTIONS: Array<{ heading: string; items: NavItem[] }> = [
         href: '/dashboard/billing',
         label: 'Billing',
         icon: Receipt,
+        built: true,
+        roles: ['RECEPTIONIST', 'ADMIN', 'AUDITOR'],
+      },
+      // The flower farms billed on account. Same roles as Billing, and for the
+      // same reason: this is a cashier's screen, not a clinical one. What each
+      // role can DO inside it is re-checked by every scheme RPC.
+      {
+        href: '/dashboard/schemes',
+        label: 'Corporate schemes',
+        icon: Building2,
         built: true,
         roles: ['RECEPTIONIST', 'ADMIN', 'AUDITOR'],
       },
