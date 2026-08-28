@@ -409,3 +409,203 @@ export function limitSummary(u: SchemeUtilisation): string {
   }
   return `${formatKes(u.spent_cents)} of ${formatKes(u.cap_cents)} · ${formatKes(remaining)} left (${pct}%)`;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Treating a corporate patient
+ *
+ * Everything below serves the clinical side of a scheme: the price list the
+ * facility agreed with each farm, the cover banner the clinician sees, and
+ * the sentence shown after a visit is posted. Same rule as above — the
+ * database owns every figure; these turn figures into words.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Which of the farm's four columns a service bills under. */
+export type TariffBucket = 'CONSULTATION' | 'LAB' | 'SURGICAL' | 'PHARMACY';
+
+export const BUCKET_LABEL: Record<TariffBucket, string> = {
+  CONSULTATION: 'Consultation',
+  LAB: 'Lab',
+  SURGICAL: 'Surgical',
+  PHARMACY: 'Pharmacy',
+};
+
+export const BUCKETS: readonly TariffBucket[] = [
+  'CONSULTATION',
+  'LAB',
+  'SURGICAL',
+  'PHARMACY',
+];
+
+/**
+ * A row of list_scheme_tariffs: one catalogue service, with the farm's price
+ * beside it when the contract covers it.
+ *
+ * `price_cents === null` means NOT COVERED, and it is deliberately a different
+ * state from a price of zero. Zero is "the contract includes this at no
+ * charge"; null is "nobody has agreed what this costs", which is what
+ * post_scheme_charge_from_encounter refuses on. Rendering the two the same way
+ * would hide the only thing this screen exists to show.
+ */
+export interface SchemeTariff {
+  service_id: string;
+  code: string;
+  name: string;
+  category: string;
+  module: string;
+  unit: string | null;
+  cash_price_cents: number;
+  insurance_price_cents: number;
+  tariff_id: string | null;
+  price_cents: number | null;
+  bucket: TariffBucket | null;
+  effective_from: string | null;
+  note: string | null;
+  set_by_name: string | null;
+}
+
+/** What encounter_scheme_context returns. No rows at all for a cash visit. */
+export interface EncounterSchemeContext {
+  member_id: string;
+  scheme_id: string;
+  scheme_code: string;
+  scheme_name: string;
+  employee_no: string;
+  relation: Relation;
+  child_ref: string | null;
+  member_name: string;
+  employee_name: string | null;
+  household_size: number;
+  covered_from: string;
+  covered_to: string | null;
+  covered: boolean;
+  cap_cents: number | null;
+  spent_cents: number;
+  remaining_cents: number | null;
+  household_month_cents: number;
+  charge_id: string | null;
+  charge_total_cents: number | null;
+  charge_status: ChargeStatus | null;
+}
+
+/** What post_scheme_charge_from_encounter returns. */
+export interface PostedSchemeCharge {
+  charge_id: string;
+  total_cents: number;
+  over_limit: boolean;
+  cap_cents: number | null;
+  spent_cents: number;
+  remaining_cents: number | null;
+  priced_count: number;
+  skipped_count: number;
+}
+
+/**
+ * The banner line a clinician reads before deciding anything.
+ *
+ * Names the company first because that is the fact that changes the decision,
+ * then who this person is on the farm's register. The household's month is
+ * included when there is one — SRK 646 made eleven visits in August and the
+ * desk asked to be able to see that.
+ */
+export function coverSummary(ctx: EncounterSchemeContext): string {
+  const who =
+    ctx.relation === 'SELF'
+      ? `payroll ${ctx.employee_no}`
+      : `${memberRole(ctx)} of ${ctx.employee_name ?? `payroll ${ctx.employee_no}`}`;
+  const parts = [ctx.scheme_name, who];
+  if (!ctx.covered) parts.push('NOT COVERED TODAY');
+  if (ctx.household_month_cents > 0) {
+    parts.push(`${formatKes(ctx.household_month_cents)} on this account this month`);
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * Where the FARM's month stands, for the banner.
+ *
+ * Reuses limitTone so the consult screen and the tracker cannot disagree about
+ * what "approaching" means. The cap never blocks care — 0030 recorded that as
+ * a decision of the facility — so this is worded as information, not a barrier.
+ */
+export function schemeMonthSummary(ctx: EncounterSchemeContext): string {
+  if (ctx.cap_cents === null || ctx.cap_cents <= 0) {
+    return `${formatKes(ctx.spent_cents)} this month · no limit set`;
+  }
+  const remaining = ctx.cap_cents - ctx.spent_cents;
+  if (remaining < 0) {
+    return `${formatKes(ctx.spent_cents)} of ${formatKes(ctx.cap_cents)} · ${formatKes(-remaining)} over`;
+  }
+  return `${formatKes(ctx.spent_cents)} of ${formatKes(ctx.cap_cents)} · ${formatKes(remaining)} left`;
+}
+
+/** The services this contract does not price — what a posting will refuse on. */
+export function untariffed(rows: readonly SchemeTariff[]): SchemeTariff[] {
+  return rows.filter((r) => r.price_cents === null);
+}
+
+export interface TariffCoverage {
+  covered: number;
+  total: number;
+  /** Null rather than 0 for an empty catalogue: "0% priced" would be a lie
+   *  about a list that has nothing in it to price. */
+  percent: number | null;
+}
+
+export function tariffCoverage(rows: readonly SchemeTariff[]): TariffCoverage {
+  const total = rows.length;
+  const covered = rows.filter((r) => r.price_cents !== null).length;
+  return {
+    covered,
+    total,
+    percent: total === 0 ? null : Math.round((covered / total) * 1000) / 10,
+  };
+}
+
+/** Catalogue order, grouped for the price-list screen. */
+export function groupTariffsByCategory(
+  rows: readonly SchemeTariff[],
+): Array<{ category: string; rows: SchemeTariff[] }> {
+  const out: Array<{ category: string; rows: SchemeTariff[] }> = [];
+  for (const row of rows) {
+    const last = out[out.length - 1];
+    if (last && last.category === row.category) last.rows.push(row);
+    else out.push({ category: row.category, rows: [row] });
+  }
+  return out;
+}
+
+/**
+ * How far a farm's price differs from the walk-in rate, as a signed percent.
+ *
+ * Shown beside each priced row so an administrator can see at a glance that
+ * Stokman's consultation is 80% below the catalogue — which is the fact that
+ * makes a per-scheme price list necessary rather than a nicety.
+ */
+export function tariffDelta(row: SchemeTariff): number | null {
+  if (row.price_cents === null || row.cash_price_cents <= 0) return null;
+  return Math.round(((row.price_cents - row.cash_price_cents) / row.cash_price_cents) * 1000) / 10;
+}
+
+/**
+ * The sentence shown after a clinician posts a visit.
+ *
+ * Says what went on the bill AND what deliberately did not. A silent skip is
+ * how the facility ended up with 163 unpriced pharmacy lines in one month;
+ * naming the count every time makes "why is this not on the invoice" a
+ * question that answers itself.
+ */
+export function postSummary(r: PostedSchemeCharge): string {
+  const parts = [`${formatKes(r.total_cents)} posted to the scheme`];
+  if (r.priced_count > 0) {
+    parts.push(`${r.priced_count} service${r.priced_count === 1 ? '' : 's'} priced`);
+  }
+  if (r.skipped_count > 0) {
+    parts.push(
+      `${r.skipped_count} not chargeable to the scheme (statutory, or priced at the pharmacy till)`,
+    );
+  }
+  if (r.over_limit) {
+    parts.push('this visit takes the company past its monthly limit');
+  }
+  return parts.join(' · ');
+}

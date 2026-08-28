@@ -5,6 +5,7 @@ import { requireStaffContext } from '@/lib/session';
 import { requireRole } from '@/lib/require-role';
 import { CAN } from '@/lib/roles';
 import type { CatalogueService } from '@/lib/catalogue';
+import type { EncounterSchemeContext } from '@/lib/schemes';
 
 export default async function ConsultPage({ params }: { params: Promise<{ id: string }> }) {
   // Consultation notes are a clinical act; save_consult_notes enforces it too.
@@ -24,15 +25,20 @@ export default async function ConsultPage({ params }: { params: Promise<{ id: st
   // this screen records what was done, not what it costs, and the figures shown
   // beside each service are the walk-in price for orientation only. What the
   // patient actually pays is decided on the invoice, from its payer.
-  const [{ data: patientRows }, { data: svcData }, { data: recordedData }] = await Promise.all([
-    supabase.rpc('get_patient', { p_patient_id: encounter.patient_id }),
-    staff.siteId
-      ? supabase.rpc('list_service_catalog', { p_site_id: staff.siteId, p_payer: 'CASH' })
-      : Promise.resolve({ data: [] }),
-    supabase.rpc('list_encounter_services', { p_encounter_id: id }),
-  ]);
+  const [{ data: patientRows }, { data: svcData }, { data: recordedData }, { data: schemeRows }] =
+    await Promise.all([
+      supabase.rpc('get_patient', { p_patient_id: encounter.patient_id }),
+      staff.siteId
+        ? supabase.rpc('list_service_catalog', { p_site_id: staff.siteId, p_payer: 'CASH' })
+        : Promise.resolve({ data: [] }),
+      supabase.rpc('list_encounter_services', { p_encounter_id: id }),
+      // Returns no rows for an ordinary visit rather than raising, so this is
+      // asked of every encounter and answered cheaply for almost all of them.
+      supabase.rpc('encounter_scheme_context', { p_encounter_id: id }),
+    ]);
 
   const patient = Array.isArray(patientRows) ? patientRows[0] : patientRows;
+  const schemeCtx = (Array.isArray(schemeRows) ? schemeRows[0] : schemeRows) ?? null;
   const vitals = (encounter.vitals ?? {}) as Record<string, string | null>;
 
   return (
@@ -52,6 +58,7 @@ export default async function ConsultPage({ params }: { params: Promise<{ id: st
         services={(svcData ?? []) as CatalogueService[]}
         initialRecorded={(recordedData ?? []) as RecordedService[]}
         canRecordServices={CAN.recordService(staff.role)}
+        schemeCtx={schemeCtx as EncounterSchemeContext | null}
       />
     </div>
   );

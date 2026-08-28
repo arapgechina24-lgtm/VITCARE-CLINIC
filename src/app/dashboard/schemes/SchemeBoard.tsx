@@ -13,12 +13,13 @@ import {
   EMPLOYMENT_LABEL, LIMIT_TONE_LABEL, STATEMENT_STATUS_LABEL,
   canIssueStatement, dayLabel, limitTone, memberRole, periodEnd, periodLabel,
   periodOf, recentPeriods, usedPercent, usedPercentExact, weekOf,
+  BUCKETS, BUCKET_LABEL, groupTariffsByCategory, tariffCoverage, tariffDelta,
   type EmploymentType, type Relation, type Scheme, type SchemeCharge,
   type SchemeMember, type SchemeMemberLookup, type SchemeStatement,
-  type SchemeUtilisation,
+  type SchemeTariff, type SchemeUtilisation, type TariffBucket,
 } from '@/lib/schemes';
 
-type Tab = 'today' | 'register' | 'members' | 'statements';
+type Tab = 'today' | 'register' | 'members' | 'prices' | 'statements';
 
 interface Awaiting {
   scheme_id: string; code: string; name: string; period: string;
@@ -241,6 +242,7 @@ export function SchemeBoard({
           ['today', 'Record a visit'],
           ['register', 'Visit register'],
           ['members', 'Staff & dependants'],
+          ['prices', 'Agreed prices'],
           ['statements', 'Statements & limit'],
         ] as Array<[Tab, string]>).map(([id, label]) => (
           <button
@@ -272,6 +274,15 @@ export function SchemeBoard({
 
       {scheme && tab === 'members' && (
         <MemberRegister scheme={scheme} canEnrol={canEnrol} today={today} />
+      )}
+
+      {scheme && tab === 'prices' && (
+        <PriceList
+          scheme={scheme}
+          canSetPrice={canSetLimit}
+          onChanged={(msg) => { setNotice(msg); setError(null); }}
+          onError={(msg) => { setError(msg); setNotice(null); }}
+        />
       )}
 
       {scheme && tab === 'statements' && (
@@ -1336,5 +1347,221 @@ function Statements({
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+// ── The agreed price list ──────────────────────────────────────────────
+/**
+ * What this farm pays, service by service.
+ *
+ * This screen is the answer to "pricing should be manual". It is manual — but
+ * once per contract, not once per visit. Typing a figure into four boxes for
+ * every patient is what the workbooks did, and it is why 163 pharmacy lines in
+ * one month carried a description and no price.
+ *
+ * A service with no price is shown as NOT COVERED, never as zero. The
+ * distinction is the whole point: zero is a price the parties agreed, null is
+ * a question nobody has answered, and post_scheme_charge_from_encounter
+ * refuses on the second so a farm is never billed a figure it did not agree.
+ *
+ * The delta beside each price is there to make the case for this screen's
+ * existence visible: Stokman's consultation is 80% below the walk-in rate, so
+ * pricing a corporate visit from the catalogue would overcharge them fivefold.
+ */
+function PriceList({
+  scheme,
+  canSetPrice,
+  onChanged,
+  onError,
+}: {
+  scheme: Scheme;
+  canSetPrice: boolean;
+  onChanged: (msg: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const [rows, setRows] = useState<SchemeTariff[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [onlyGaps, setOnlyGaps] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [price, setPrice] = useState('');
+  const [bucket, setBucket] = useState<TariffBucket>('LAB');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc('list_scheme_tariffs', {
+      p_scheme_id: scheme.id,
+      p_on: null,
+      p_covered_only: false,
+    });
+    setLoading(false);
+    if (error) return onError(error.message);
+    setRows((data ?? []) as SchemeTariff[]);
+  }, [scheme.id, onError]);
+
+  useEffect(() => {
+    const t = setTimeout(() => { setLoading(true); void load(); }, 0);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  const coverage = useMemo(() => tariffCoverage(rows), [rows]);
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (onlyGaps && r.price_cents !== null) return false;
+      if (!q) return true;
+      return r.code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
+    });
+  }, [rows, query, onlyGaps]);
+
+  async function save(row: SchemeTariff) {
+    const cents = parseKesToCents(price);
+    if (cents === null) return onError('Enter the price as a number, for example 100 or 250.50');
+    setBusy(true);
+    const { error } = await supabase.rpc('set_scheme_tariff', {
+      p_scheme_id: scheme.id,
+      p_service_id: row.service_id,
+      p_bucket: bucket,
+      p_price_cents: cents,
+      p_effective_from: null,
+      p_note: null,
+    });
+    setBusy(false);
+    if (error) return onError(error.message);
+    setEditing(null);
+    setPrice('');
+    onChanged(`${row.code} priced at ${formatKes(cents)} for ${scheme.code}.`);
+    await load();
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title={`What ${scheme.name} pays`}
+        subtitle={
+          loading
+            ? 'Loading the catalogue…'
+            : `${coverage.covered} of ${coverage.total} services priced`
+            + `${coverage.percent === null ? '' : ` (${coverage.percent}%)`}`
+            + ' · anything unpriced stops a visit being posted, and says which service'
+        }
+      />
+      <CardBody className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by code or name"
+            className="min-w-48 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-muted"
+          />
+          <label className="inline-flex items-center gap-1.5 text-sm text-ink-secondary">
+            <input
+              type="checkbox"
+              checked={onlyGaps}
+              onChange={(e) => setOnlyGaps(e.target.checked)}
+            />
+            Not priced yet
+          </label>
+        </div>
+
+        {!loading && visible.length === 0 && (
+          <StatusBadge
+            tone="neutral"
+            label={onlyGaps ? 'Every billable service has an agreed price.' : 'Nothing matches that search.'}
+          />
+        )}
+
+        <div className="space-y-4">
+          {groupTariffsByCategory(visible).map((group) => (
+            <div key={group.category}>
+              <p className="mb-1 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
+                {group.category}
+              </p>
+              <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+                {group.rows.map((r) => {
+                  const delta = tariffDelta(r);
+                  return (
+                    <li key={r.service_id} className="px-3 py-2">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-ink">
+                            <span className="text-ink-muted">{r.code}</span> {r.name}
+                          </p>
+                          <p className="text-2xs text-ink-muted">
+                            Walk-in {formatKes(r.cash_price_cents)}
+                            {r.price_cents !== null && r.bucket
+                              ? ` · bills under ${BUCKET_LABEL[r.bucket]}`
+                              : ''}
+                            {delta !== null ? ` · ${delta > 0 ? '+' : ''}${delta}% vs walk-in` : ''}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          {r.price_cents === null ? (
+                            <span className="text-sm font-medium text-warning-ink">Not covered</span>
+                          ) : (
+                            <span className="text-sm font-semibold text-ink">
+                              {formatKes(r.price_cents)}
+                            </span>
+                          )}
+                          {canSetPrice && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditing(editing === r.service_id ? null : r.service_id);
+                                setPrice(r.price_cents === null ? '' : String(r.price_cents / 100));
+                                setBucket(r.bucket ?? 'LAB');
+                              }}
+                              className="ml-2 text-2xs text-brand underline"
+                            >
+                              {r.price_cents === null ? 'set price' : 'change'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {editing === r.service_id && canSetPrice && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <input
+                            value={price}
+                            onChange={(e) => setPrice(e.target.value)}
+                            placeholder="Price in KES"
+                            inputMode="decimal"
+                            className="w-32 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink"
+                          />
+                          <select
+                            value={bucket}
+                            onChange={(e) => setBucket(e.target.value as TariffBucket)}
+                            className="rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink"
+                          >
+                            {BUCKETS.map((b) => (
+                              <option key={b} value={b}>{BUCKET_LABEL[b]} column</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => save(r)}
+                            className="rounded-lg bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-40"
+                          >
+                            {busy ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditing(null)}
+                            className="text-2xs text-ink-muted underline"
+                          >
+                            cancel
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </CardBody>
+    </Card>
   );
 }
