@@ -15,6 +15,7 @@ code.
 | `openapi.yaml` | The wire contract, for both teams and for contract tests. | Both |
 | `webhook-handler.test.ts` | 19 tests: signature forgery, body tampering, replay window, dedupe, state machine, payload validation. | CLINIC (here) |
 | `pos-client-outbox.test.ts` | 18 tests: request shape/idempotency key, retry-vs-permanent classification, backoff ceiling, drain accounting. | CLINIC (here) |
+| `rollout.test.ts` | What each vintage of till is served, over every combination of old and new on the two sides. Its counterpart on the POS pins the other direction. | Both (one each) |
 
 ## Tests
 
@@ -184,3 +185,76 @@ needed only by the push drain.
 A forged **ack** is the dangerous direction — it would retire a prescription
 that never reached the pharmacy. `pull-handler.test.ts` asserts that every
 rejected request returns before touching the store.
+
+---
+
+## Contract versions, and deploying one side before the other
+
+The two systems ship independently, onto a LAN, in a pharmacy that is open.
+There is no minute at which both can be swapped at once — so every combination
+of old and new has to be safe, not merely brief.
+
+| | Sender stamps | Receiver accepts |
+|---|---|---|
+| `1.0.0` | every ordinary prescription and status event | every build, past and present |
+| `1.1.0` | only a payload carrying a scheme settlement | builds from this change onwards |
+
+`CONTRACT_VERSION` is what a sender stamps **when it needs the newest
+features** — not on everything. `versionFor()` decides, and
+`CreatePrescriptionSchema` refuses the mismatched combination on the sender's
+own side, so a settlement can never travel under a version that would ignore it.
+
+### Why not one version for everything
+
+The receivers used to validate with `z.literal(CONTRACT_VERSION)`. That makes
+every version bump a synchronised cutover of clinic and till at the same
+minute, which this facility cannot perform. Receivers now accept a **set**
+(`SUPPORTED_CONTRACT_VERSIONS`), so the receiving side can be deployed first
+and the sending side starts using the new version afterwards.
+
+### The four states
+
+| Clinic | Till | What happens |
+|---|---|---|
+| old | old | today; no settlement can exist |
+| **new** | **old** | settled prescriptions are withheld and queue visibly; ordinary ones flow untouched |
+| **old** | **new** | the till stamps `1.0.0` on every event, because none carries a settlement; the old clinic accepts them all |
+| new | new | the feature |
+
+None of these is refused. **The interlock exists to make one-sided deployment
+safe, not to prevent it** — a distinction that is easy to state backwards, so
+it is pinned by `rollout.test.ts` in this directory and by its counterpart in
+`vitcare-pos/src/lib/integration/rollout.test.ts` rather than left as prose.
+
+### Negotiation on the pull path
+
+The till states what it can honour in `X-Contract-Version`; the clinic serves
+nothing newer. An **absent** header reads as the baseline, not as "anything
+goes" — a till built before negotiation existed sends nothing, and guessing
+high is how a patient gets charged for medicine their employer already agreed
+to pay for. A version this build has never heard of is treated the same way.
+
+The header sits **outside** the HMAC: it selects which rows are served, never
+what they contain, so the worst a forged value can do is narrow the caller's
+own page — and a caller wanting fewer rows could simply ask for fewer.
+
+The filter is applied **in the query**, not to the returned page. Filtering
+afterwards would let a run of newer prescriptions at the head of the outbox
+fill every page an older till asks for: it would receive an empty list forever
+while ordinary prescriptions waited behind them, and nothing would be failing
+anywhere.
+
+### Order of operations for a release
+
+1. **Run the SQL on both databases first.** Code ships by pushing; a database
+   does not. The clinic's migrations are pasted by hand; the till's
+   `supabase/scheme-settlement.sql` adds the column that holds the instruction.
+2. **Deploy either side, in any order.** The table above is why this is not a
+   coordination problem.
+3. **Turn the clause on last**, per scheme, once both sides are deployed —
+   `schemes.settles_pharmacy`, from Corporate schemes → Agreed prices. Until an
+   administrator does, no `1.1.0` payload is ever produced and every terminal
+   behaves exactly as it does today.
+
+Step 3 is what makes steps 1 and 2 unhurried: the feature is dark until
+somebody deliberately switches it on for a named farm.
