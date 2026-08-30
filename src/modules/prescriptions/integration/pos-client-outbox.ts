@@ -10,7 +10,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { CreatePrescriptionSchema, type CreatePrescription, CONTRACT_VERSION } from './prescription-contract';
+import { CreatePrescriptionSchema, type CreatePrescription } from './prescription-contract';
 
 /** Injected config — never hardcode. Loaded from server-side env only. */
 export interface PosClientConfig {
@@ -75,7 +75,11 @@ export class PosClient {
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          'X-Contract-Version': CONTRACT_VERSION,
+          // The version THIS payload needs, not the newest this build can
+          // speak. A till that only understands the baseline must be able to
+          // read the header and see that an ordinary prescription is still
+          // ordinary.
+          'X-Contract-Version': parsed.data.contractVersion,
           'X-Timestamp': timestamp,
           'X-Signature': signature,
           // POS MUST dedupe on this — safe to retry the same prescription.
@@ -87,7 +91,22 @@ export class PosClient {
       if (res.ok) return { ok: true, status: res.status, permanent: false };
 
       // 4xx (except 408/429) = our fault or a rejection — do not retry.
-      const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+      //
+      // EXCEPT when we sent an instruction the till may simply be too old to
+      // understand. A settlement-bearing prescription is stamped a newer
+      // contract version, and a till that predates it rejects the payload with
+      // a 422 that looks exactly like a malformed body. Marking that failed
+      // forever would be 0016 all over again: a prescription the pharmacy
+      // never sees, a clinician who was told it sent, and a `failed` flag in a
+      // table nobody watches.
+      //
+      // The fix for this rejection is deploying the till, not editing the
+      // payload — so it is transient by nature, and the row must survive to be
+      // delivered after that deploy. The pull path avoids the situation
+      // entirely by negotiating first; this is the push path's safety net.
+      const versionRejection = res.status === 422 && parsed.data.settlement !== undefined;
+      const permanent =
+        !versionRejection && res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
       return { ok: false, status: res.status, permanent, error: `POS responded ${res.status}` };
     } catch (err) {
       // Network/timeout — transient, retry.
@@ -113,8 +132,14 @@ export interface OutboxRow {
 
 /** The data operations the worker needs — implement against Supabase. */
 export interface OutboxStore {
-  /** Claim a batch of undelivered rows whose nextAttemptAt <= now. */
-  claimBatch(limit: number): Promise<OutboxRow[]>;
+  /**
+   * Claim a batch of undelivered rows whose nextAttemptAt <= now.
+   *
+   * @param versions when given, serve only rows stamped with one of these
+   *   contract versions. Used by the pull path so a till is never handed a
+   *   prescription carrying instructions its build would ignore.
+   */
+  claimBatch(limit: number, versions?: readonly string[]): Promise<OutboxRow[]>;
   markDelivered(id: string): Promise<void>;
   /** Schedule a retry with backoff, or mark permanently failed. */
   reschedule(id: string, attempts: number, nextAttemptAt: Date): Promise<void>;

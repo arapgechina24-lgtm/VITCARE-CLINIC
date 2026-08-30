@@ -59,6 +59,11 @@ export function makeWebhookDeps(supabase: SupabaseClient, signingSecret: string)
         p_total_amount_cents: event.totalAmountCents ?? null,
         p_reason: event.reason ?? null,
         p_lines: event.lines ?? null,
+        // Applied in the SAME transaction as the status change, by the same
+        // RPC. A DISPENSED that committed without the farm's charge following
+        // would be a medicine handed over for free with nothing left to
+        // invoice — and the webhook would never retry, because it succeeded.
+        p_scheme_settled: event.schemeSettled ?? null,
       });
       if (!error) return;
 
@@ -83,12 +88,20 @@ export function makeWebhookDeps(supabase: SupabaseClient, signingSecret: string)
 
 export function makeOutboxStore(supabase: SupabaseClient): OutboxStore {
   return {
-    async claimBatch(limit) {
-      const { data, error } = await supabase
+    async claimBatch(limit, versions) {
+      let query = supabase
         .from('integration_outbox')
         .select('id, prescription_id, payload, attempts')
         .eq('delivered', false)
-        .eq('failed', false)
+        .eq('failed', false);
+      // Filtered in the QUERY, not over the returned page, and that
+      // distinction is the whole point. Filtering afterwards would let a run
+      // of scheme prescriptions sitting at the head of the queue fill every
+      // page an un-upgraded till asks for, and it would receive an empty list
+      // forever while ordinary prescriptions waited behind them. The pharmacy
+      // would go quiet with nothing failing anywhere.
+      if (versions) query = query.in('payload->>contractVersion', versions);
+      const { data, error } = await query
         // 'now' is evaluated by POSTGRES. next_attempt_at is written with the
         // database's clock, so comparing it to this process's clock makes
         // eligibility depend on two machines agreeing — measured skew against

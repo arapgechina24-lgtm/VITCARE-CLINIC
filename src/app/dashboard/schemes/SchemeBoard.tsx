@@ -44,7 +44,7 @@ const BAR_FOR_LIMIT: Record<string, string> = {
 };
 
 export function SchemeBoard({
-  role, siteId, schemes, utilisation, statements, awaiting,
+  role, siteId, schemes: initialSchemes, utilisation, statements, awaiting,
 }: {
   role: string;
   siteId: string;
@@ -56,13 +56,20 @@ export function SchemeBoard({
   const [, startTransition] = useTransition();
 
   const today = useMemo(() => nairobiToday(), []);
-  const [schemeId, setSchemeId] = useState(schemes[0]?.id ?? '');
+  const [schemeId, setSchemeId] = useState(initialSchemes[0]?.id ?? '');
   const [tab, setTab] = useState<Tab>('today');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Live copies, so a posted charge updates the tracker without a page reload.
+  //
+  // The scheme rows are here too, not read straight from the props, because a
+  // contract clause can now be changed from this screen. Left as props, the
+  // "pays for medicines" checkbox would write to the database and then re-render
+  // from the server's original answer — snapping back to its old state while the
+  // change had in fact been saved.
+  const [schemes, setSchemes] = useState(initialSchemes);
   const [util, setUtil] = useState(utilisation);
   const [stmts, setStmts] = useState(statements);
   const [pending, setPending] = useState(awaiting);
@@ -76,14 +83,19 @@ export function SchemeBoard({
   const canIssue = role === 'ADMIN';
 
   const refresh = useCallback(async () => {
-    const [{ data: u }, { data: s }, { data: p }] = await Promise.all([
+    const [{ data: u }, { data: s }, { data: p }, { data: sc }] = await Promise.all([
       supabase.rpc('scheme_utilisation', { p_site_id: siteId }),
       supabase.rpc('list_scheme_statements', { p_site_id: siteId, p_limit: 24 }),
       supabase.rpc('scheme_periods_awaiting_statement', { p_site_id: siteId }),
+      supabase.rpc('list_schemes', { p_site_id: siteId, p_include_inactive: true }),
     ]);
     if (u) setUtil(u as SchemeUtilisation[]);
     if (s) setStmts(s as SchemeStatement[]);
     if (p) setPending(p as Awaiting[]);
+    // Guarded on length: an empty array here would blank the selector and take
+    // the whole screen with it, and "the query failed" must not look like "this
+    // facility has no schemes".
+    if (sc && (sc as Scheme[]).length) setSchemes(sc as Scheme[]);
   }, [siteId]);
 
   if (!schemes.length) {
@@ -280,7 +292,7 @@ export function SchemeBoard({
         <PriceList
           scheme={scheme}
           canSetPrice={canSetLimit}
-          onChanged={(msg) => { setNotice(msg); setError(null); }}
+          onChanged={(msg) => { setNotice(msg); setError(null); void refresh(); }}
           onError={(msg) => { setError(msg); setNotice(null); }}
         />
       )}
@@ -1414,6 +1426,24 @@ function PriceList({
     });
   }, [rows, query, onlyGaps]);
 
+  async function setSettlesPharmacy(next: boolean) {
+    setBusy(true);
+    const { error } = await supabase.rpc('set_scheme_settles_pharmacy', {
+      p_scheme_id: scheme.id,
+      p_settles: next,
+    });
+    setBusy(false);
+    if (error) return onError(error.message);
+    // onChanged refreshes the scheme rows, which is where this flag lives —
+    // reloading only the tariff list would leave the checkbox showing its old
+    // state while the database held the new one.
+    onChanged(
+      next
+        ? `${scheme.name} now pays for medicines — the till will stop collecting from their members.`
+        : `${scheme.name} no longer pays for medicines — their members pay at the till.`,
+    );
+  }
+
   async function save(row: SchemeTariff) {
     const cents = parseKesToCents(price);
     if (cents === null) return onError('Enter the price as a number, for example 100 or 250.50');
@@ -1447,6 +1477,39 @@ function PriceList({
         }
       />
       <CardBody className="space-y-3">
+        {/* Medicines sit here, with the rest of the contract's terms, because
+            that is what this is — a clause, not a setting. It carries no price
+            for the same reason no drug does: the shelf's prices live in
+            VITCARE-POS and a second copy here would drift from the first. */}
+        <div className="rounded-lg border border-line p-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={scheme.settles_pharmacy}
+              disabled={!canSetPrice || busy}
+              onChange={(e) => void setSettlesPharmacy(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-ink">
+                {scheme.name} pays for medicines dispensed at the pharmacy
+              </span>
+              <span className="mt-0.5 block text-ink-secondary">
+                {scheme.settles_pharmacy
+                  ? 'The till hands medicines to their members without collecting, and the'
+                    + ' value goes on this statement at the pharmacy\u2019s own prices.'
+                  : 'Members pay for their own medicines at the till. Turn this on only if the'
+                    + ' contract says otherwise \u2014 it moves that money to this statement.'}
+              </span>
+              {!canSetPrice && (
+                <span className="mt-0.5 block text-ink-muted">
+                  An administrator changes what a contract covers.
+                </span>
+              )}
+            </span>
+          </label>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={query}

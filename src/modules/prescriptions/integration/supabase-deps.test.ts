@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   makeWebhookDeps,
+  makeOutboxStore,
   StatusConflictError,
   PrescriptionNotFoundError,
   PG_ILLEGAL_TRANSITION,
@@ -74,6 +75,7 @@ describe('makeWebhookDeps.applyStatusEvent', () => {
       p_total_amount_cents: 42000,
       p_reason: null,
       p_lines: EVENT.lines,
+      p_scheme_settled: null,
     });
   });
 
@@ -142,5 +144,107 @@ describe('makeWebhookDeps.applyStatusEvent', () => {
       () => makeWebhookDeps(client, 'secret').applyStatusEvent(EVENT),
       (err: unknown) => !(err instanceof StatusConflictError) && !(err instanceof PrescriptionNotFoundError),
     );
+  });
+});
+
+
+/**
+ * Records the filters applied to a query. The chainable methods return `this`
+ * so the builder can be driven exactly as the real one is, and `then` makes it
+ * awaitable at the end of the chain.
+ */
+function stubQuery() {
+  const filters: Array<{ op: string; column: string; value: unknown }> = [];
+  const builder = {
+    filters,
+    from() { return builder; },
+    select() { return builder; },
+    eq(column: string, value: unknown) { filters.push({ op: 'eq', column, value }); return builder; },
+    lte(column: string, value: unknown) { filters.push({ op: 'lte', column, value }); return builder; },
+    in(column: string, value: unknown) { filters.push({ op: 'in', column, value }); return builder; },
+    order() { return builder; },
+    limit() { return builder; },
+    then(resolve: (r: { data: unknown[]; error: null }) => unknown) {
+      return Promise.resolve(resolve({ data: [], error: null }));
+    },
+  };
+  return builder;
+}
+
+describe('claimBatch — version filtering', () => {
+  test('no version list leaves the query unfiltered, so the push path is unchanged', async () => {
+    const q = stubQuery();
+    await makeOutboxStore(q as unknown as SupabaseClient).claimBatch(25);
+    assert.equal(q.filters.filter((f) => f.op === 'in').length, 0);
+  });
+
+  test('a version list is pushed into the QUERY, not applied to the page', async () => {
+    // The distinction that matters. Filtering the returned page would let a
+    // run of newer prescriptions at the head of the queue fill every page an
+    // older till asks for — it would receive an empty list forever while
+    // ordinary prescriptions waited behind them, with nothing failing.
+    const q = stubQuery();
+    await makeOutboxStore(q as unknown as SupabaseClient).claimBatch(25, ['1.0.0']);
+    const applied = q.filters.find((f) => f.op === 'in');
+    assert.ok(applied, 'the version list must reach the query');
+    assert.equal(applied.column, 'payload->>contractVersion');
+    assert.deepEqual(applied.value, ['1.0.0']);
+  });
+
+  test('eligibility is still decided by the database clock, not this process', async () => {
+    // Guards the reason claimBatch is shared at all: the version filter must
+    // narrow eligibility, never replace it.
+    const q = stubQuery();
+    await makeOutboxStore(q as unknown as SupabaseClient).claimBatch(25, ['1.0.0']);
+    assert.deepEqual(
+      q.filters.find((f) => f.op === 'lte'),
+      { op: 'lte', column: 'next_attempt_at', value: 'now' },
+    );
+    assert.ok(q.filters.some((f) => f.op === 'eq' && f.column === 'delivered' && f.value === false));
+    assert.ok(q.filters.some((f) => f.op === 'eq' && f.column === 'failed' && f.value === false));
+  });
+});
+
+
+describe('applyStatusEvent — the scheme settlement report', () => {
+  const SETTLED = {
+    amountCents: 116000,
+    invoiceNo: 'INV-42',
+    memberId: '44444444-4444-4444-8444-444444444444',
+  };
+
+  test('an ordinary dispensing sends null, not an empty object', async () => {
+    // Null is what the RPC's default and its `is not null` guard are written
+    // against. An empty object would pass that guard and try to record a
+    // dispensing with no membership behind it.
+    const { client, calls } = stubClient(null);
+    await makeWebhookDeps(client, 'secret').applyStatusEvent(EVENT);
+    assert.equal(calls[0].args.p_scheme_settled, null);
+  });
+
+  test('a settled dispensing passes the report through whole', async () => {
+    const { client, calls } = stubClient(null);
+    await makeWebhookDeps(client, 'secret').applyStatusEvent({
+      ...EVENT,
+      contractVersion: '1.1.0',
+      totalAmountCents: 0,
+      schemeSettled: SETTLED,
+    });
+    assert.deepEqual(calls[0].args.p_scheme_settled, SETTLED);
+  });
+
+  test('it rides the SAME rpc call as the status change', async () => {
+    // One call, one transaction. If the settlement were a second call, a
+    // DISPENSED could commit while the farm's charge did not — a medicine
+    // handed over for free with nothing left to invoice, and a webhook that
+    // never retries because it succeeded.
+    const { client, calls } = stubClient(null);
+    await makeWebhookDeps(client, 'secret').applyStatusEvent({
+      ...EVENT,
+      contractVersion: '1.1.0',
+      schemeSettled: SETTLED,
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].fn, 'apply_status_event');
   });
 });
