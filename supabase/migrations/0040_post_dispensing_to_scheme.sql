@@ -100,6 +100,11 @@ declare
   v_status text;
   v_cents integer;
   v_desc text;
+  v_scheme uuid;
+  v_period date;
+  v_cap integer;
+  v_spent integer;
+  v_total integer;
 begin
   select c.id, c.status into v_charge, v_status
   from scheme_charges c
@@ -134,12 +139,46 @@ begin
     v_desc := null;
   end if;
 
-  -- total_cents follows from the four buckets via the trigger 0030 installed,
-  -- so it is deliberately not set here: two places computing one total is how
-  -- they come to disagree.
+  -- ── The cap has to be re-judged, not left as posted ─────────────────────
+  -- A dispensing changes this charge's total, and the total is what the
+  -- month is measured against. Updating the column without re-judging the cap
+  -- would let medicines carry a farm past its agreed ceiling with over_limit
+  -- still reading false — and over_limit is what puts a charge in the column
+  -- the farm has to approve separately. The overspend would reach the
+  -- statement as ordinary, approved spending.
+  --
+  -- Same advisory lock and the same key as both posting paths, so all three
+  -- queue behind each other rather than two of them reading a figure under
+  -- the cap and both writing over it.
+  select c.period into v_period from scheme_charges c where c.id = v_charge;
+  select c.scheme_id into v_scheme from scheme_charges c where c.id = v_charge;
+  perform pg_advisory_xact_lock(hashtext(v_scheme::text || v_period::text));
+
+  v_cap := scheme_cap_cents(v_scheme, v_period);
+  -- This charge's own total is excluded, exactly as
+  -- post_scheme_charge_from_encounter excludes it, so recomputing measures the
+  -- month without double-counting the visit being changed.
+  select coalesce(sum(c.total_cents), 0)::integer into v_spent
+  from scheme_charges c
+  where c.scheme_id = v_scheme and c.period = v_period and c.status <> 'VOID'
+    and c.id <> v_charge;
+
+  -- The new total, computed the same way the trigger will compute it. Read
+  -- from the row rather than re-derived, so the two cannot disagree about
+  -- anything except the bucket being changed here.
+  select c.consultation_cents + c.lab_cents + c.surgical_cents + coalesce(v_cents, 0)
+    into v_total
+  from scheme_charges c where c.id = v_charge;
+
+  -- total_cents itself follows from the four buckets via the trigger 0030
+  -- installed, so it is deliberately not set here: two places computing one
+  -- total is how they come to disagree.
   update scheme_charges
   set pharmacy_description = v_desc,
       pharmacy_cents = coalesce(v_cents, 0),
+      over_limit = (v_cap is not null and (v_spent + v_total) > v_cap),
+      cap_at_post_cents = v_cap,
+      spent_before_cents = v_spent,
       updated_at = now()
   where id = v_charge;
 
