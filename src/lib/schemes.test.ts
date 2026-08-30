@@ -12,7 +12,10 @@ import {
   memberRole, limitTone, usedPercent, usedPercentExact, periodLabel, dayLabel,
   periodOf, periodEnd, recentPeriods, weekOf, totalCharges, groupByDay,
   exportRows, EXPORT_HEADERS, canIssueStatement, limitSummary,
-  type SchemeCharge, type SchemeUtilisation,
+  coverSummary, schemeMonthSummary, untariffed, tariffCoverage, tariffDelta,
+  groupTariffsByCategory, postSummary,
+  type SchemeCharge, type SchemeUtilisation, type SchemeTariff,
+  type EncounterSchemeContext, type PostedSchemeCharge,
 } from './schemes';
 
 const charge = (over: Partial<SchemeCharge> = {}): SchemeCharge => ({
@@ -303,5 +306,162 @@ describe('limitSummary', () => {
       limitSummary(util({ spent_cents: 280_000, cap_cents: 200_000 })),
       'KSh 2,800.00 of KSh 2,000.00 · KSh 800.00 over (140%)',
     );
+  });
+});
+
+/* ── Treating a corporate patient ─────────────────────────────────────── */
+
+const ctx = (over: Partial<EncounterSchemeContext> = {}): EncounterSchemeContext => ({
+  member_id: 'm1', scheme_id: 's1', scheme_code: 'SRK',
+  scheme_name: 'Stokman Rozen Kenya Ltd',
+  employee_no: '646', relation: 'SELF', child_ref: null,
+  member_name: 'ZAKIUS OWINO ABIERO', employee_name: 'ZAKIUS OWINO ABIERO',
+  household_size: 6, covered_from: '1997-01-01', covered_to: null, covered: true,
+  cap_cents: null, spent_cents: 0, remaining_cents: null, household_month_cents: 0,
+  charge_id: null, charge_total_cents: null, charge_status: null,
+  ...over,
+});
+
+const tariff = (over: Partial<SchemeTariff> = {}): SchemeTariff => ({
+  service_id: 'sv1', code: 'CON-002',
+  name: 'Outpatient consultation - Clinical Officer',
+  category: 'Consultation & Registration', module: 'Core', unit: 'visit',
+  cash_price_cents: 50_000, insurance_price_cents: 60_000,
+  tariff_id: null, price_cents: null, bucket: null,
+  effective_from: null, note: null, set_by_name: null,
+  ...over,
+});
+
+describe('coverSummary', () => {
+  test('names the company, then the person on its register', () => {
+    assert.equal(
+      coverSummary(ctx()),
+      'Stokman Rozen Kenya Ltd · payroll 646',
+    );
+  });
+
+  test('a dependant is described by whose account they draw on', () => {
+    assert.equal(
+      coverSummary(ctx({ relation: 'CHILD', child_ref: 'B', member_name: 'MERCY A' })),
+      'Stokman Rozen Kenya Ltd · Child B of ZAKIUS OWINO ABIERO',
+    );
+  });
+
+  test('lapsed cover is stated in capitals, not implied by an absence', () => {
+    assert.match(coverSummary(ctx({ covered: false })), /NOT COVERED TODAY/);
+  });
+
+  test("the household's month is shown when there is one", () => {
+    assert.equal(
+      coverSummary(ctx({ household_month_cents: 124_00 })),
+      'Stokman Rozen Kenya Ltd · payroll 646 · KSh 124.00 on this account this month',
+    );
+  });
+});
+
+describe('schemeMonthSummary', () => {
+  test('no agreed ceiling says so rather than rendering as zero', () => {
+    assert.equal(
+      schemeMonthSummary(ctx({ spent_cents: 117_150 })),
+      'KSh 1,171.50 this month · no limit set',
+    );
+  });
+
+  test('reports the overspend as an amount', () => {
+    assert.equal(
+      schemeMonthSummary(ctx({ spent_cents: 130_000, cap_cents: 120_000 })),
+      'KSh 1,300.00 of KSh 1,200.00 · KSh 100.00 over',
+    );
+  });
+});
+
+describe('untariffed', () => {
+  test('a null price is uncovered; a zero price is covered at no charge', () => {
+    const rows = [
+      tariff({ code: 'A', price_cents: null }),
+      tariff({ code: 'B', price_cents: 0, bucket: 'LAB' }),
+      tariff({ code: 'C', price_cents: 10_000, bucket: 'CONSULTATION' }),
+    ];
+    assert.deepEqual(untariffed(rows).map((r) => r.code), ['A']);
+  });
+});
+
+describe('tariffCoverage', () => {
+  test('counts what the contract prices', () => {
+    assert.deepEqual(
+      tariffCoverage([
+        tariff({ price_cents: 10_000 }),
+        tariff({ price_cents: null }),
+        tariff({ price_cents: null }),
+        tariff({ price_cents: 0 }),
+      ]),
+      { covered: 2, total: 4, percent: 50 },
+    );
+  });
+
+  test('an empty catalogue has no percentage rather than 0%', () => {
+    assert.deepEqual(tariffCoverage([]), { covered: 0, total: 0, percent: null });
+  });
+});
+
+describe('tariffDelta', () => {
+  test("Stokman's consultation is 80% below the walk-in rate", () => {
+    // The real figures: catalogue CON-002 is KES 500, the contract is KES 100.
+    assert.equal(tariffDelta(tariff({ price_cents: 10_000 })), -80);
+  });
+
+  test('an uncovered service has no delta to report', () => {
+    assert.equal(tariffDelta(tariff({ price_cents: null })), null);
+  });
+
+  test('a catalogue price of zero cannot be a denominator', () => {
+    assert.equal(tariffDelta(tariff({ price_cents: 100, cash_price_cents: 0 })), null);
+  });
+});
+
+describe('groupTariffsByCategory', () => {
+  test('keeps catalogue order and does not split a repeated category', () => {
+    const out = groupTariffsByCategory([
+      tariff({ code: 'CON-002', category: 'Consultation & Registration' }),
+      tariff({ code: 'CON-003', category: 'Consultation & Registration' }),
+      tariff({ code: 'LAB-CHE-001', category: 'Laboratory - Clinical Chemistry' }),
+    ]);
+    assert.deepEqual(
+      out.map((g) => [g.category, g.rows.length]),
+      [['Consultation & Registration', 2], ['Laboratory - Clinical Chemistry', 1]],
+    );
+  });
+});
+
+describe('postSummary', () => {
+  const posted = (over: Partial<PostedSchemeCharge> = {}): PostedSchemeCharge => ({
+    charge_id: 'c1', total_cents: 60_000, over_limit: false,
+    cap_cents: null, spent_cents: 60_000, remaining_cents: null,
+    priced_count: 2, skipped_count: 0, ...over,
+  });
+
+  test('says what went on the bill', () => {
+    assert.equal(
+      postSummary(posted()),
+      'KSh 600.00 posted to the scheme · 2 services priced',
+    );
+  });
+
+  test('names what was deliberately left off — the 163-line failure', () => {
+    // The August Stokman sheet had 163 pharmacy lines and one price. A skip
+    // that says nothing is how that happens; this one always counts out loud.
+    assert.equal(
+      postSummary(posted({ skipped_count: 2 })),
+      'KSh 600.00 posted to the scheme · 2 services priced · '
+        + '2 not chargeable to the scheme (statutory, or priced at the pharmacy till)',
+    );
+  });
+
+  test('singular for one service', () => {
+    assert.match(postSummary(posted({ priced_count: 1 })), /1 service priced/);
+  });
+
+  test('warns when the visit crosses the company limit', () => {
+    assert.match(postSummary(posted({ over_limit: true })), /past its monthly limit/);
   });
 });

@@ -12,6 +12,12 @@ import {
   chargeBlockReason, groupByCategory, searchServices,
   type CatalogueService,
 } from '@/lib/catalogue';
+import { SchemeBanner } from '@/components/patient/SchemeBanner';
+import {
+  postSummary,
+  type EncounterSchemeContext,
+  type PostedSchemeCharge,
+} from '@/lib/schemes';
 
 export interface RecordedService {
   id: string;
@@ -45,18 +51,46 @@ export default function ConsultForm({
   services,
   initialRecorded,
   canRecordServices,
+  schemeCtx,
 }: {
   encounterId: string;
   initialNotes: string;
   services: CatalogueService[];
   initialRecorded: RecordedService[];
   canRecordServices: boolean;
+  /** Null for an ordinary visit, which is almost all of them. */
+  schemeCtx: EncounterSchemeContext | null;
 }) {
   const router = useRouter();
   const [note, setNote] = useState<ConsultNote>(() => parseNote(initialNotes));
   const [recorded, setRecorded] = useState(initialRecorded);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [posted, setPosted] = useState<string | null>(null);
+
+  /**
+   * Turn what was recorded into the farm's four columns.
+   *
+   * Deliberately re-runnable: a clinician posts, then remembers the dressing.
+   * post_scheme_charge_from_encounter recomputes the existing charge rather
+   * than adding a second one, so pressing this twice is a correction and not a
+   * double bill. The server refuses outright if anything performed has no
+   * agreed price — that refusal is surfaced verbatim, because it names the
+   * services an administrator has to price.
+   */
+  async function postToScheme() {
+    setBusy(true);
+    setError(null);
+    setPosted(null);
+    const { data, error } = await supabase.rpc('post_scheme_charge_from_encounter', {
+      p_encounter_id: encounterId,
+    });
+    setBusy(false);
+    if (error) return setError(error.message);
+    const row = (Array.isArray(data) ? data[0] : data) as PostedSchemeCharge | undefined;
+    if (row) setPosted(postSummary(row));
+    router.refresh();
+  }
 
   async function refreshRecorded() {
     const { data } = await supabase.rpc('list_encounter_services', { p_encounter_id: encounterId });
@@ -81,6 +115,34 @@ export default function ConsultForm({
       {error && (
         <div className="rounded-lg bg-critical-wash px-3 py-2">
           <p className="text-xs text-critical-ink">{error}</p>
+        </div>
+      )}
+
+      {schemeCtx && (
+        <SchemeBanner
+          ctx={schemeCtx}
+          action={
+            canRecordServices && schemeCtx.charge_status !== 'STATEMENTED' ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={postToScheme}
+                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-hover disabled:opacity-40"
+              >
+                {busy
+                  ? 'Posting…'
+                  : schemeCtx.charge_id
+                    ? 'Re-price visit'
+                    : `Post to ${schemeCtx.scheme_code}`}
+              </button>
+            ) : undefined
+          }
+        />
+      )}
+
+      {posted && (
+        <div className="rounded-lg bg-good-wash px-3 py-2">
+          <p className="text-xs text-good-ink">{posted}</p>
         </div>
       )}
 
