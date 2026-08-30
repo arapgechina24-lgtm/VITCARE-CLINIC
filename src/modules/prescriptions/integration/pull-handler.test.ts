@@ -9,7 +9,18 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { handlePosFetch, handlePosAck, type PullDeps, type PendingPrescription } from './pull-handler';
+import {
+  handlePosFetch,
+  handlePosAck,
+  versionsUpTo,
+  type PullDeps,
+  type PendingPrescription,
+} from './pull-handler';
+import {
+  BASELINE_CONTRACT_VERSION,
+  CONTRACT_VERSION,
+  SUPPORTED_CONTRACT_VERSIONS,
+} from './prescription-contract';
 import { signBody } from './signature';
 
 const SECRET = 'x'.repeat(48);
@@ -17,10 +28,19 @@ const ID_A = '11111111-1111-4111-8111-111111111111';
 const ID_B = '22222222-2222-4222-8222-222222222222';
 
 function makeDeps(pending: PendingPrescription[] = []) {
-  const calls = { fetchPending: 0, markDelivered: [] as string[], audit: 0 };
+  const calls = {
+    fetchPending: 0,
+    markDelivered: [] as string[],
+    audit: 0,
+    maxVersion: null as string | null,
+  };
   const deps: PullDeps = {
     signingSecret: SECRET,
-    async fetchPending(limit) { calls.fetchPending += 1; return pending.slice(0, limit); },
+    async fetchPending(limit, maxVersion) {
+      calls.fetchPending += 1;
+      calls.maxVersion = maxVersion;
+      return pending.slice(0, limit);
+    },
     async markDelivered(id) { calls.markDelivered.push(id); },
     async audit() { calls.audit += 1; },
   };
@@ -28,13 +48,22 @@ function makeDeps(pending: PendingPrescription[] = []) {
 }
 
 /** A correctly-signed request, unless overridden. */
-function req(body: unknown, over: { secret?: string; timestamp?: string; signature?: string } = {}) {
+function req(
+  body: unknown,
+  over: { secret?: string; timestamp?: string; signature?: string; version?: string } = {},
+) {
   const raw = typeof body === 'string' ? body : JSON.stringify(body);
   const timestamp = over.timestamp ?? new Date().toISOString();
   const signature = over.signature ?? signBody(over.secret ?? SECRET, timestamp, raw);
+  const headers: Record<string, string> = {
+    'X-Timestamp': timestamp,
+    'X-Signature': signature,
+    'content-type': 'application/json',
+  };
+  if (over.version !== undefined) headers['X-Contract-Version'] = over.version;
   return new Request('https://clinic.example/api/integration/pos/outbox/fetch', {
     method: 'POST',
-    headers: { 'X-Timestamp': timestamp, 'X-Signature': signature, 'content-type': 'application/json' },
+    headers,
     body: raw,
   });
 }
@@ -190,5 +219,65 @@ describe('ack', () => {
     };
     await assert.rejects(() => handlePosAck(req({ outboxIds: [ID_A, ID_B] }), deps));
     assert.deepEqual(marked, [ID_A]);
+  });
+});
+
+
+describe('fetch — contract version negotiation', () => {
+  test('a till that says nothing is served the baseline, not the newest', async () => {
+    // The whole safety argument rests on this default. A till built before
+    // negotiation existed sends no header, and reading that silence as "serve
+    // it everything" would hand it exactly the prescriptions it cannot honour.
+    const { deps, calls } = makeDeps([item(ID_A)]);
+    const res = await handlePosFetch(req({ limit: 25 }), deps);
+    assert.equal(res.status, 200);
+    assert.equal(calls.maxVersion, BASELINE_CONTRACT_VERSION);
+  });
+
+  test('a till that states a version it can honour is served up to it', async () => {
+    const { deps, calls } = makeDeps([item(ID_A)]);
+    await handlePosFetch(req({ limit: 25 }, { version: CONTRACT_VERSION }), deps);
+    assert.equal(calls.maxVersion, CONTRACT_VERSION);
+  });
+
+  test('a version from the future is not taken at its word', async () => {
+    // A till claiming 9.9.9 is one this clinic cannot reason about. Serving it
+    // our newest rows on the strength of an uninterpretable string is the
+    // trust this negotiation exists to withhold.
+    const { deps, calls } = makeDeps([item(ID_A)]);
+    await handlePosFetch(req({ limit: 25 }, { version: '9.9.9' }), deps);
+    assert.equal(calls.maxVersion, BASELINE_CONTRACT_VERSION);
+  });
+
+  test('a malformed version falls back rather than throwing', async () => {
+    const { deps, calls } = makeDeps([item(ID_A)]);
+    const res = await handlePosFetch(req({ limit: 25 }, { version: 'not a version' }), deps);
+    assert.equal(res.status, 200);
+    assert.equal(calls.maxVersion, BASELINE_CONTRACT_VERSION);
+  });
+
+  test('surrounding whitespace does not downgrade a capable till', async () => {
+    const { deps, calls } = makeDeps([item(ID_A)]);
+    await handlePosFetch(req({ limit: 25 }, { version: `  ${CONTRACT_VERSION}  ` }), deps);
+    assert.equal(calls.maxVersion, CONTRACT_VERSION);
+  });
+});
+
+describe('versionsUpTo', () => {
+  test('the baseline caller is offered only the baseline', () => {
+    assert.deepEqual(versionsUpTo(BASELINE_CONTRACT_VERSION), [BASELINE_CONTRACT_VERSION]);
+  });
+
+  test('the newest caller is offered every version, older included', () => {
+    // An upgraded till must keep receiving ordinary 1.0.0 prescriptions. If
+    // this ever narrowed to just the newest version, every routine
+    // prescription in the facility would stop reaching the pharmacy.
+    assert.deepEqual(versionsUpTo(CONTRACT_VERSION), [...SUPPORTED_CONTRACT_VERSIONS]);
+  });
+
+  test('every supported version is offered itself', () => {
+    for (const v of SUPPORTED_CONTRACT_VERSIONS) {
+      assert.ok(versionsUpTo(v).includes(v), `${v} must be served to a till that speaks ${v}`);
+    }
   });
 });

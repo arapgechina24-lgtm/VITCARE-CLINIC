@@ -30,6 +30,22 @@
  * That is visible rather than silent: pharmacy_link_health() reports
  * oldest_undelivered_at, and the pharmacy board shows the row as still queued.
  *
+ * ── VERSION NEGOTIATION ────────────────────────────────────────────────────
+ * The caller states what it can honour in `X-Contract-Version`, and the clinic
+ * serves nothing newer. A till that predates a feature is simply not handed the
+ * prescriptions that need it, so a staged rollout is a non-event for the queue
+ * of ordinary prescriptions flowing past it.
+ *
+ * An ABSENT header means a till built before negotiation existed, so it is read
+ * as the baseline version rather than as "anything goes". That is the safe
+ * direction: the failure of guessing too low is a scheme prescription waiting
+ * a little longer, and the failure of guessing too high is a patient charged
+ * for medicine their employer has already agreed to pay for.
+ *
+ * The header sits outside the HMAC. It selects which rows are served and never
+ * what they contain, so the worst a forged value can do is narrow the caller's
+ * own page — and a caller that wanted fewer rows could simply ask for fewer.
+ *
  * ── AUTH ───────────────────────────────────────────────────────────────────
  * Identical to the inbound webhook — HMAC-SHA256 over `${timestamp}.${rawBody}`
  * verified on the raw body inside a five-minute window, via the shared
@@ -40,6 +56,12 @@
 
 import { z } from 'zod';
 import { rejectIfUnauthentic } from './signature';
+import {
+  BASELINE_CONTRACT_VERSION,
+  SUPPORTED_CONTRACT_VERSIONS,
+  isSupportedVersion,
+  type ContractVersion,
+} from './prescription-contract';
 
 export interface PendingPrescription {
   /** The outbox row id. This is what the till acks — NOT the prescription id,
@@ -53,7 +75,9 @@ export interface PendingPrescription {
 
 export interface PullDeps {
   signingSecret: string;
-  fetchPending(limit: number): Promise<PendingPrescription[]>;
+  /** @param maxVersion the newest contract version the caller can honour;
+   *  rows stamped newer than this must not be served. */
+  fetchPending(limit: number, maxVersion: ContractVersion): Promise<PendingPrescription[]>;
   markDelivered(outboxId: string): Promise<void>;
   audit(action: string, detail: string): Promise<void>;
 }
@@ -66,6 +90,26 @@ const FetchRequestSchema = z.object({
 const AckRequestSchema = z.object({
   outboxIds: z.array(z.string().uuid()).min(1).max(100),
 });
+
+/**
+ * The newest version this caller says it can honour.
+ *
+ * Anything unrecognised — absent, malformed, or a version from a FUTURE build
+ * this clinic has never heard of — reads as the baseline. A till claiming a
+ * version we do not know is a till we cannot reason about, and serving it our
+ * newest rows on the strength of a string we cannot interpret is exactly the
+ * trust this negotiation exists to withhold.
+ */
+export function negotiatedVersion(headers: Headers): ContractVersion {
+  const declared = headers.get('X-Contract-Version')?.trim();
+  return declared && isSupportedVersion(declared) ? declared : BASELINE_CONTRACT_VERSION;
+}
+
+/** Every version at or below `max`, oldest first. */
+export function versionsUpTo(max: ContractVersion): ContractVersion[] {
+  const idx = SUPPORTED_CONTRACT_VERSIONS.indexOf(max);
+  return SUPPORTED_CONTRACT_VERSIONS.slice(0, idx + 1) as unknown as ContractVersion[];
+}
 
 /**
  * POST /api/integration/pos/outbox/fetch
@@ -85,7 +129,7 @@ export async function handlePosFetch(request: Request, deps: PullDeps): Promise<
     return Response.json({ error: 'invalid payload' }, { status: 422 });
   }
 
-  const pending = await deps.fetchPending(limit);
+  const pending = await deps.fetchPending(limit, negotiatedVersion(request.headers));
   return Response.json({ prescriptions: pending, count: pending.length }, { status: 200 });
 }
 

@@ -35,6 +35,15 @@ export interface Scheme {
   members: number;
   /** Null when finance has not agreed a ceiling. Not zero — see below. */
   cap_cents: number | null;
+  /**
+   * True when this farm's contract covers medicines dispensed at the pharmacy.
+   *
+   * Off unless somebody has read the contract and said so. While it is off the
+   * till collects from the patient exactly as it always has, which is why the
+   * default is safe rather than merely conservative: turning it on redirects
+   * money from the counter to a monthly statement.
+   */
+  settles_pharmacy: boolean;
 }
 
 export interface SchemeMember {
